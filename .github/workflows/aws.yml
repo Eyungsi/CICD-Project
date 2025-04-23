@@ -16,14 +16,14 @@ jobs:
     name: Prepare Static Site
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Upload HTML files
+      - name: Upload HTML Files
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  # or ./build if your files live in a subfolder
+          path: ./  # Adjust if files live in a subdirectory
 
   deploy-dev:
     name: Deploy to Development EC2
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: development
     steps:
-      - name: Download artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
@@ -42,31 +42,38 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Dev EC2
+      - name: Deploy to Development Server
         run: |
           rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -ex
             DEPLOY_DIR="/var/www/html"
-            # Install Apache if not already
+
+            # Ensure Apache is installed
             if ! command -v httpd &>/dev/null; then
               sudo dnf install -y httpd
               sudo systemctl enable httpd
             fi
+
+            # Prepare for deployment
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
             sudo rm -rf $DEPLOY_DIR/*
             sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
-            # Restore SELinux context if enabled
+
+            # Handle SELinux
             if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
               sudo restorecon -Rv $DEPLOY_DIR
             fi
+
+            # Restart Apache
             sudo apachectl configtest
             sudo systemctl start httpd
-            echo "Dev deployment complete"
+            echo " Dev deployment complete"
           EOF
+
   deploy-prod:
     name: Deploy to Production EC2
     needs: deploy-dev
@@ -74,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Download artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
@@ -85,27 +92,35 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Prod EC2
+      - name: Deploy to Production Server
         run: |
           rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -ex
             DEPLOY_DIR="/var/www/html"
+
+            # Ensure Apache is installed
             if ! command -v httpd &>/dev/null; then
               sudo dnf install -y httpd
               sudo systemctl enable httpd
             fi
+
+            # Prepare for deployment
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
             sudo rm -rf $DEPLOY_DIR/*
             sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
+
+            # Handle SELinux
             if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
               sudo restorecon -Rv $DEPLOY_DIR
             fi
+
+            # Restart Apache and verify
             sudo apachectl configtest
             sudo systemctl start httpd
             curl -I http://localhost || true
-            echo "Production deployment complete"
+            echo " Production deployment complete"
           EOF
