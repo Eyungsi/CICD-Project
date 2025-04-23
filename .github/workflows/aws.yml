@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  # Adjust if your site is in a subfolder
+          path: ./  # Adjust if your HTML files are in a subfolder
 
   deploy-dev:
     name: Deploy to Development
@@ -48,34 +48,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to Dev EC2 and Start Apache
+      - name: Deploy to Dev EC2 and Restart Apache
         run: |
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
             DEPLOY_DIR="/var/www/html"
+
+            echo " Extracting files to $DEPLOY_DIR..."
             sudo mkdir -p $DEPLOY_DIR
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
 
-            sudo dnf install -y httpd
+            echo " Restarting Apache..."
+            sudo systemctl restart httpd
+            sudo systemctl status httpd --no-pager || true
 
-            # Ensure Apache listens on port 80
-            if ! sudo grep -q '^Listen 80' /etc/httpd/conf/httpd.conf; then
-              echo "Listen 80" | sudo tee -a /etc/httpd/conf/httpd.conf
-            fi
-
-            sudo systemctl enable httpd
-
-            if ! sudo systemctl start httpd; then
-              echo " Apache failed to start. Displaying logs..."
-              sudo systemctl status httpd || true
-              sudo journalctl -xeu httpd || true
-              exit 1
-            fi
-
-            echo "Apache started and static files served at /var/www/html"
+            echo " Deployment complete. App should now be live at http://${{ env.DEV_SERVER }}"
           EOF
 
   deploy-prod:
@@ -95,32 +85,22 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Prod EC2 and Start Apache
+      - name: Deploy to Prod EC2 and Restart Apache
         run: |
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -e
             DEPLOY_DIR="/var/www/html"
+
+            echo " Extracting files to $DEPLOY_DIR..."
             sudo mkdir -p $DEPLOY_DIR
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
 
-            sudo dnf install -y httpd
+            echo " Restarting Apache..."
+            sudo systemctl restart httpd
+            sudo systemctl status httpd --no-pager || true
 
-            # Ensure Apache listens on port 80
-            if ! sudo grep -q '^Listen 80' /etc/httpd/conf/httpd.conf; then
-              echo "Listen 80" | sudo tee -a /etc/httpd/conf/httpd.conf
-            fi
-
-            sudo systemctl enable httpd
-
-            if ! sudo systemctl start httpd; then
-              echo " Apache failed to start. Displaying logs..."
-              sudo systemctl status httpd || true
-              sudo journalctl -xeu httpd || true
-              exit 1
-            fi
-
-            echo " Production deployment successful and Apache is running"
+            echo "Production deployment complete. App should now be live at http://${{ env.PROD_SERVER }}"
           EOF
