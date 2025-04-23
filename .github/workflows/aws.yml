@@ -6,84 +6,110 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_DIR: "/var/www/html"
-  TEMP_DIR: "/tmp/static-resume"
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  APP_NAME: "static-resume"
+  DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}
+  PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}
 
 jobs:
   build:
-    name: Package Site
+    name: Prepare Static Site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/upload-artifact@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Upload site files
+        uses: actions/upload-artifact@v4
         with:
-          name: site-build
-          path: ./
+          name: static-resume-build
+          path: ./  # Change to ./build if needed
 
   deploy-dev:
-    name: Deploy to Development
+    name: Deploy to Development EC2
     needs: build
     runs-on: ubuntu-latest
     environment: development
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download site files
+        uses: actions/download-artifact@v4
         with:
-          name: site-build
+          name: static-resume-build
           path: build/
 
-      - uses: webfactory/ssh-agent@v0.7.0
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy Files
+      - name: Deploy to Dev EC2
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ secrets.DEV_SERVER_IP }}:${{ env.TEMP_DIR }}/
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} <<'EOF'
-            set -ex
-            sudo dnf install -y httpd || true
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
+            set -e
+            DEPLOY_DIR="/var/www/html"
+
+            # Ensure Apache is installed and running
+            command -v httpd >/dev/null || sudo dnf install -y httpd
+            sudo systemctl enable httpd
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
+
+            # Clean and deploy
             sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo cp -r $TEMP_DIR/* $DEPLOY_DIR/
+            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
-            sudo restorecon -Rv $DEPLOY_DIR || true
+
+            # Handle SELinux
+            command -v sestatus >/dev/null && sudo sestatus | grep -q enabled && sudo restorecon -Rv $DEPLOY_DIR
+
+            # Restart Apache
+            sudo apachectl configtest
             sudo systemctl start httpd
-            echo "Dev deployment successful"
+            echo "Dev deployment complete"
           EOF
 
   deploy-prod:
-    name: Deploy to Production
+    name: Deploy to Production EC2
     needs: deploy-dev
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download site files
+        uses: actions/download-artifact@v4
         with:
-          name: site-build
+          name: static-resume-build
           path: build/
 
-      - uses: webfactory/ssh-agent@v0.7.0
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy Files
+      - name: Deploy to Prod EC2
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ secrets.PROD_SERVER_IP }}:${{ env.TEMP_DIR }}/
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} <<'EOF'
-            set -ex
-            sudo dnf install -y httpd || true
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
+            set -e
+            DEPLOY_DIR="/var/www/html"
+
+            command -v httpd >/dev/null || sudo dnf install -y httpd
+            sudo systemctl enable httpd
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
+
             sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo cp -r $TEMP_DIR/* $DEPLOY_DIR/
+            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
-            sudo restorecon -Rv $DEPLOY_DIR || true
+
+            command -v sestatus >/dev/null && sudo sestatus | grep -q enabled && sudo restorecon -Rv $DEPLOY_DIR
+
+            sudo apachectl configtest
             sudo systemctl start httpd
+
             curl -I http://localhost || true
-            echo "Production deployment successful"
+            echo "Production deployment complete"
           EOF
