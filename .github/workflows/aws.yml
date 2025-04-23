@@ -60,10 +60,22 @@ jobs:
             sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
 
             sudo dnf install -y httpd
-            sudo systemctl enable httpd
-            sudo systemctl start httpd
 
-            echo " Dev deployment complete and Apache started"
+            # Ensure Apache listens on port 80
+            if ! sudo grep -q '^Listen 80' /etc/httpd/conf/httpd.conf; then
+              echo "Listen 80" | sudo tee -a /etc/httpd/conf/httpd.conf
+            fi
+
+            sudo systemctl enable httpd
+
+            if ! sudo systemctl start httpd; then
+              echo " Apache failed to start. Displaying logs..."
+              sudo systemctl status httpd || true
+              sudo journalctl -xeu httpd || true
+              exit 1
+            fi
+
+            echo "Apache started and static files served at /var/www/html"
           EOF
 
   deploy-prod:
@@ -95,8 +107,20 @@ jobs:
             sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
 
             sudo dnf install -y httpd
-            sudo systemctl enable httpd
-            sudo systemctl start httpd
 
-            echo "Production deployment complete and Apache started"
+            # Ensure Apache listens on port 80
+            if ! sudo grep -q '^Listen 80' /etc/httpd/conf/httpd.conf; then
+              echo "Listen 80" | sudo tee -a /etc/httpd/conf/httpd.conf
+            fi
+
+            sudo systemctl enable httpd
+
+            if ! sudo systemctl start httpd; then
+              echo " Apache failed to start. Displaying logs..."
+              sudo systemctl status httpd || true
+              sudo journalctl -xeu httpd || true
+              exit 1
+            fi
+
+            echo " Production deployment successful and Apache is running"
           EOF
