@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  # Adjust if your HTML files are in a subfolder
+          path: ./  # Change if your site is in a subfolder like 'dist/'
 
   deploy-dev:
     name: Deploy to Development
@@ -54,10 +54,11 @@ jobs:
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
-            DEPLOY_DIR="/home/ec2-user/static-resume"
-            mkdir -p $DEPLOY_DIR
-            tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            echo " Dev deployment complete to Amazon Linux"
+            DEPLOY_DIR="/var/www/html"
+            sudo mkdir -p $DEPLOY_DIR
+            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
+            echo " Dev deployment to /var/www/html complete"
           EOF
 
   deploy-prod:
@@ -83,8 +84,9 @@ jobs:
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -e
-            DEPLOY_DIR="/home/ec2-user/static-resume"
-            mkdir -p $DEPLOY_DIR
-            tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            echo " Production deployment complete to Amazon Linux"
+            DEPLOY_DIR="/var/www/html"
+            sudo mkdir -p $DEPLOY_DIR
+            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
+            echo " Production deployment to /var/www/html complete"
           EOF
