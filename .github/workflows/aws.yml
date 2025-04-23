@@ -16,25 +16,25 @@ jobs:
     name: Build Static Site
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-    
-    - name: Install dependencies
-      run: npm ci
+      - uses: actions/checkout@v4
       
-    - name: Build static site
-      run: npm run build
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
       
-    - name: Archive build artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: static-resume-build
-        path: build/
-        retention-days: 1
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build static site
+        run: npm run build
+        
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-resume-build
+          path: build/
+          retention-days: 1
 
   deploy-dev:
     name: Deploy to Development
@@ -42,91 +42,47 @@ jobs:
     runs-on: ubuntu-latest
     environment: development
     steps:
-    - name: Download build artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: static-resume-build
-        path: build/  # Important: Match upload path
-        
-    - name: Verify downloaded files
-      run: |
-        echo "Downloaded files:"
-        ls -la build/
-        [ -f "build/index.html" ] || (echo "index.html missing!" && exit 1)
-        
-    - uses: webfactory/ssh-agent@v0.7.0
-      with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Deploy to Dev Server
-      run: |
-        echo "Deploying to Dev Server (${{ env.DEV_SERVER }})"
-        tar -czf static-resume.tar.gz -C build/ .
-        
-        scp -o StrictHostKeyChecking=no \
-            static-resume.tar.gz \
-            ec2-user@${{ env.DEV_SERVER }}:/tmp/
-            
-        ssh -o StrictHostKeyChecking=no \
-            ec2-user@${{ env.DEV_SERVER }} << 'EOF'
-        #!/bin/bash
-        set -e
-        DEPLOY_DIR="/var/www/static-resume"
-        sudo mkdir -p $DEPLOY_DIR
-        sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-        sudo chown -R nginx:nginx $DEPLOY_DIR
-        echo "Deployment complete!"
-        EOF
-        
-        curl -sSf http://${{ env.DEV_SERVER }} || \
-          (echo "Deployment verification failed!" && exit 1)
-
-  deploy-prod:
-    name: Deploy to Production
-    needs: deploy-dev
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-    - name: Download build artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: static-resume-build
-        path: build/
-        
-    - uses: webfactory/ssh-agent@v0.7.0
-      with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-    
-    - name: Deploy to Prod Server
-      run: |
-        echo "Deploying to Prod Server (${{ env.PROD_SERVER }})"
-        tar -czf static-resume.tar.gz -C build/ .
-        
-        scp -o StrictHostKeyChecking=no \
-            static-resume.tar.gz \
-            ec2-user@${{ env.PROD_SERVER }}:/tmp/
-            
-        ssh -o StrictHostKeyChecking=no \
-            ec2-user@${{ env.PROD_SERVER }} << 'EOF'
-        #!/bin/bash
-        set -e
-        DEPLOY_DIR="/var/www/static-resume"
-        TIMESTAMP=$(date +%Y%m%d%H%M%S)
-        sudo mkdir -p /var/www/backups
-        [ -d "$DEPLOY_DIR" ] && sudo tar -czf /var/www/backups/static-resume-$TIMESTAMP.tar.gz -C $DEPLOY_DIR .
-        sudo mkdir -p $DEPLOY_DIR
-        sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-        sudo chown -R nginx:nginx $DEPLOY_DIR
-        echo "Production deployment complete!"
-        EOF
-        
-        curl -sSf http://${{ env.PROD_SERVER }} || \
-          (echo "Production deployment verification failed!" && exit 1)
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: static-resume-build
+          path: build/
+          
+      - name: Verify downloaded files
+        run: |
+          echo "Downloaded files:"
+          ls -la build/
+          [ -f "build/index.html" ] || (echo "index.html missing!" && exit 1)
+          
+      - uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Deploy to Dev Server
+        run: |
+          echo "Deploying to Dev Server (${{ env.DEV_SERVER }})"
+          tar -czf static-resume.tar.gz -C build/ .
+          
+          scp -o StrictHostKeyChecking=no \
+              static-resume.tar.gz \
+              ec2-user@${{ env.DEV_SERVER }}:/tmp/
+              
+          ssh -o StrictHostKeyChecking=no \
+              ec2-user@${{ env.DEV_SERVER }} << 'EOF'
+          set -e
+          DEPLOY_DIR="/var/www/static-resume"
+          sudo mkdir -p $DEPLOY_DIR
+          sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+          sudo chown -R nginx:nginx $DEPLOY_DIR
+          echo "Development deployment complete!"
+          EOF
+          
+          curl -sSf http://${{ env.DEV_SERVER }} || \
+            (echo "Deployment verification failed!"
