@@ -20,87 +20,111 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Archive HTML files
+        run: tar -czf static-resume.tar.gz -C ./ .
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  # Adjust if your HTML files are in a subfolder
+          path: static-resume.tar.gz
 
   deploy-dev:
-    name: Deploy to Development
+    name: Deploy to Development EC2
     needs: build
     runs-on: ubuntu-latest
     environment: development
     steps:
-      - name: Download artifacts
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
-          path: build/
 
-      - uses: webfactory/ssh-agent@v0.7.0
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy to Dev EC2 and Restart Apache
+      - name: Deploy and Restart Apache
         run: |
-          tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
+
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
+
             DEPLOY_DIR="/var/www/html"
+            ARCHIVE_PATH="/tmp/static-resume.tar.gz"
 
-            echo " Extracting files to $DEPLOY_DIR..."
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
+            echo "Cleaning old files in \$DEPLOY_DIR..."
+            sudo rm -rf \${DEPLOY_DIR:?}/*
 
-            echo " Restarting Apache..."
+            echo "Extracting new files to \$DEPLOY_DIR..."
+            sudo mkdir -p \$DEPLOY_DIR
+            sudo tar -xzf \$ARCHIVE_PATH -C \$DEPLOY_DIR
+
+            echo "Setting ownership for Apache..."
+            sudo chown -R apache:apache \$DEPLOY_DIR || sudo chown -R www-data:www-data \$DEPLOY_DIR
+
+            echo "Killing any processes on port 80..."
+            sudo fuser -k 80/tcp || true
+
+            echo "Removing stale Apache PID (if any)..."
+            sudo rm -f /run/httpd/httpd.pid || true
+
+            echo "Restarting Apache server..."
+            sudo systemctl enable httpd
             sudo systemctl restart httpd
             sudo systemctl status httpd --no-pager || true
 
-            echo " Deployment complete. App should now be live at http://${{ env.DEV_SERVER }}"
-          EOF
+            echo " Dev deployment complete at http://${{ env.DEV_SERVER }}"
+EOF
 
   deploy-prod:
-    name: Deploy to Production
+    name: Deploy to Production EC2
     needs: deploy-dev
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Download artifacts
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
-          path: build/
 
-      - uses: webfactory/ssh-agent@v0.7.0
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Prod EC2 and Restart Apache
+      - name: Deploy and Restart Apache
         run: |
-          tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
+
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -e
+
             DEPLOY_DIR="/var/www/html"
+            ARCHIVE_PATH="/tmp/static-resume.tar.gz"
 
-            echo " Extracting files to $DEPLOY_DIR..."
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
+            echo "Cleaning old files in \$DEPLOY_DIR..."
+            sudo rm -rf \${DEPLOY_DIR:?}/*
 
-            echo " Restarting Apache..."
+            echo "Extracting new files to \$DEPLOY_DIR..."
+            sudo mkdir -p \$DEPLOY_DIR
+            sudo tar -xzf \$ARCHIVE_PATH -C \$DEPLOY_DIR
+
+            echo "Setting ownership for Apache..."
+            sudo chown -R apache:apache \$DEPLOY_DIR || sudo chown -R www-data:www-data \$DEPLOY_DIR
+
+            echo "Killing any processes on port 80..."
+            sudo fuser -k 80/tcp || true
+
+            echo "Removing stale Apache PID (if any)..."
+            sudo rm -f /run/httpd/httpd.pid || true
+
+            echo "Restarting Apache server..."
+            sudo systemctl enable httpd
             sudo systemctl restart httpd
             sudo systemctl status httpd --no-pager || true
 
-            echo "Production deployment complete. App should now be live at http://${{ env.PROD_SERVER }}"
-          EOF
+            echo " Prod deployment complete at http://${{ env.PROD_SERVER }}"
+EOF
