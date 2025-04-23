@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  # Change if your site is in a subfolder like 'dist/'
+          path: ./
 
   deploy-dev:
     name: Deploy to Development
@@ -55,52 +55,28 @@ jobs:
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
             DEPLOY_DIR="/var/www/html"
+            
+            # Stop Apache before deployment
+            sudo systemctl stop httpd || true
+            
             # Clean the deployment directory
             sudo rm -rf $DEPLOY_DIR/*
+            
             # Create directory if it doesn't exist
             sudo mkdir -p $DEPLOY_DIR
+            
             # Extract new files
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            
             # Set proper permissions
             sudo chown -R apache:apache $DEPLOY_DIR
-            # Restart Apache to ensure changes take effect
-            sudo systemctl restart httpd
+            sudo chmod -R 755 $DEPLOY_DIR
+            
+            # Start Apache
+            sudo systemctl start httpd
+            
+            # Verify Apache is running
+            sudo systemctl status httpd --no-pager
+            
             echo "Dev deployment to $DEPLOY_DIR complete. Apache restarted."
-          EOF
-
-  deploy-prod:
-    name: Deploy to Production
-    needs: deploy-dev
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: static-resume-build
-          path: build/
-
-      - uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Deploy to Prod EC2
-        run: |
-          tar -czf static-resume.tar.gz -C build/ .
-          scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
-            set -e
-            DEPLOY_DIR="/var/www/html"
-            # Clean the deployment directory
-            sudo rm -rf $DEPLOY_DIR/*
-            # Create directory if it doesn't exist
-            sudo mkdir -p $DEPLOY_DIR
-            # Extract new files
-            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            # Set proper permissions (using apache user for web server)
-            sudo chown -R apache:apache $DEPLOY_DIR
-            # Restart Apache to ensure changes take effect
-            sudo systemctl restart httpd
-            echo "Production deployment to $DEPLOY_DIR complete. Apache restarted."
           EOF
