@@ -1,4 +1,4 @@
-name: Deploy Static Resume
+name: Deploy Static Resume to AWS EC2
 
 on:
   push:
@@ -6,71 +6,108 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_DIR: "/var/www/html"
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  APP_NAME: "static-resume"
+  DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}
+  PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}
 
 jobs:
   build:
-    name: Package Site
+    name: Prepare Static Site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/upload-artifact@v4
-        with:
-          name: site-build
-          path: ./
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  deploy:
-    name: Deploy to Server
+      - name: Archive HTML files
+        run: tar -czf static-resume.tar.gz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-resume-build
+          path: static-resume.tar.gz
+
+  deploy-dev:
+    name: Deploy to Development EC2
     needs: build
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        environment: 
-          - name: dev
-            server: ${{ secrets.DEV_SERVER_IP }}
-          - name: prod
-            server: ${{ secrets.PROD_SERVER_IP }}
-            if: github.ref == 'refs/heads/main'
+    environment: development
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download artifact
+        uses: actions/download-artifact@v4
         with:
-          name: site-build
-          path: build/
+          name: static-resume-build
 
-      - uses: webfactory/ssh-agent@v0.7.0
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to ${{ matrix.environment.name }}
+      - name: Deploy to Dev Server
         run: |
-          # Package and transfer files
-          tar -czf site.tar.gz -C build/ .
-          scp -o StrictHostKeyChecking=no site.tar.gz ec2-user@${{ matrix.environment.server }}:/tmp/
-
-          # Remote deployment commands
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ matrix.environment.server }} << 'EOF'
+          scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
-            echo "Starting deployment to $DEPLOY_DIR"
+            DEPLOY_DIR="/var/www/html"
 
-            # Ensure Apache is ready
-            sudo dnf install -y httpd || true
+            # Install and enable Apache
+            command -v httpd >/dev/null || { sudo dnf install -y httpd && sudo systemctl enable httpd; }
             sudo systemctl stop httpd || true
-            sudo pkill httpd || true
             sudo fuser -k 80/tcp || true
 
-            # Clean and prepare directory
-            sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf /tmp/site.tar.gz -C $DEPLOY_DIR
-
-            # Set permissions
+            # Clean and deploy
+            sudo rm -rf ${DEPLOY_DIR:?}/*
+            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
-            sudo restorecon -Rv $DEPLOY_DIR || true
 
-            # Start Apache
+            # SELinux context (if enabled)
+            command -v sestatus && sudo sestatus | grep -q enabled && sudo restorecon -Rv $DEPLOY_DIR
+
+            # Restart Apache
+            sudo apachectl configtest
             sudo systemctl start httpd
-            sudo systemctl status httpd --no-pager
+            echo " Dev deployment complete"
+          EOF
 
-            echo "Deployment to ${{ matrix.environment.name }} complete"
+  deploy-prod:
+    name: Deploy to Production EC2
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: static-resume-build
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to Prod Server
+        run: |
+          scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
+            set -e
+            DEPLOY_DIR="/var/www/html"
+
+            command -v httpd >/dev/null || { sudo dnf install -y httpd && sudo systemctl enable httpd; }
+            sudo systemctl stop httpd || true
+            sudo fuser -k 80/tcp || true
+
+            sudo rm -rf ${DEPLOY_DIR:?}/*
+            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            sudo chown -R apache:apache $DEPLOY_DIR
+            sudo chmod -R 755 $DEPLOY_DIR
+
+            command -v sestatus && sudo sestatus | grep -q enabled && sudo restorecon -Rv $DEPLOY_DIR
+
+            sudo apachectl configtest
+            sudo systemctl start httpd
+            echo " Prod deployment complete"
+            curl -I http://localhost || true
           EOF
