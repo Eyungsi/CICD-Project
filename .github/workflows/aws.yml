@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./
+          path: ./  # or ./build if your files live in a subfolder
 
   deploy-dev:
     name: Deploy to Development EC2
@@ -44,32 +44,29 @@ jobs:
 
       - name: Deploy to Dev EC2
         run: |
-          scp -r -o StrictHostKeyChecking=no build/* ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -ex
             DEPLOY_DIR="/var/www/html"
-
+            # Install Apache if not already
             if ! command -v httpd &>/dev/null; then
               sudo dnf install -y httpd
               sudo systemctl enable httpd
             fi
-
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
             sudo rm -rf $DEPLOY_DIR/*
             sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
-
+            # Restore SELinux context if enabled
             if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
               sudo restorecon -Rv $DEPLOY_DIR
             fi
-
             sudo apachectl configtest
             sudo systemctl start httpd
             echo "Dev deployment complete"
           EOF
-
   deploy-prod:
     name: Deploy to Production EC2
     needs: deploy-dev
@@ -90,27 +87,23 @@ jobs:
 
       - name: Deploy to Prod EC2
         run: |
-          scp -r -o StrictHostKeyChecking=no build/* ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -ex
             DEPLOY_DIR="/var/www/html"
-
             if ! command -v httpd &>/dev/null; then
               sudo dnf install -y httpd
               sudo systemctl enable httpd
             fi
-
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
             sudo rm -rf $DEPLOY_DIR/*
             sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
-
             if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
               sudo restorecon -Rv $DEPLOY_DIR
             fi
-
             sudo apachectl configtest
             sudo systemctl start httpd
             curl -I http://localhost || true
