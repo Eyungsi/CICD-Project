@@ -34,49 +34,37 @@ jobs:
     runs-on: ubuntu-latest
     environment: development
     steps:
-      - name: Download build artifact
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
 
-      - name: Install SSH key
+      - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy and Restart Apache
+      - name: Deploy to Dev EC2
         run: |
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
-
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
-
             DEPLOY_DIR="/var/www/html"
             ARCHIVE_PATH="/tmp/static-resume.tar.gz"
 
-            echo "Cleaning old files in \$DEPLOY_DIR..."
-            sudo rm -rf \${DEPLOY_DIR:?}/*
+            echo " Cleaning up existing files..."
+            sudo rm -rf ${DEPLOY_DIR:?}/*
 
-            echo "Extracting new files to \$DEPLOY_DIR..."
-            sudo mkdir -p \$DEPLOY_DIR
-            sudo tar -xzf \$ARCHIVE_PATH -C \$DEPLOY_DIR
+            echo " Extracting files..."
+            sudo mkdir -p $DEPLOY_DIR
+            sudo tar -xzf $ARCHIVE_PATH -C $DEPLOY_DIR
+            sudo chown -R apache:apache $DEPLOY_DIR || sudo chown -R www-data:www-data $DEPLOY_DIR
 
-            echo "Setting ownership for Apache..."
-            sudo chown -R apache:apache \$DEPLOY_DIR || sudo chown -R www-data:www-data \$DEPLOY_DIR
-
-            echo "Killing any processes on port 80..."
-            sudo fuser -k 80/tcp || true
-
-            echo "Removing stale Apache PID (if any)..."
-            sudo rm -f /run/httpd/httpd.pid || true
-
-            echo "Restarting Apache server..."
+            echo " Restarting Apache..."
             sudo systemctl enable httpd
-            sudo systemctl restart httpd
-            sudo systemctl status httpd --no-pager || true
-
-            echo " Dev deployment complete at http://${{ env.DEV_SERVER }}"
-EOF
+            sudo systemctl restart httpd || sudo systemctl start httpd
+            echo " Development deployment complete!"
+          EOF
 
   deploy-prod:
     name: Deploy to Production EC2
@@ -85,46 +73,40 @@ EOF
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Download build artifact
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
 
-      - name: Install SSH key
+      - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy and Restart Apache
+      - name: Deploy to Prod EC2
         run: |
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
-
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -e
-
             DEPLOY_DIR="/var/www/html"
+            BACKUP_DIR="/var/www/backups"
             ARCHIVE_PATH="/tmp/static-resume.tar.gz"
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
 
-            echo "Cleaning old files in \$DEPLOY_DIR..."
-            sudo rm -rf \${DEPLOY_DIR:?}/*
+            echo " Backing up existing production files..."
+            sudo mkdir -p $BACKUP_DIR
+            [ -d "$DEPLOY_DIR" ] && sudo tar -czf $BACKUP_DIR/static-resume-$TIMESTAMP.tar.gz -C $DEPLOY_DIR .
 
-            echo "Extracting new files to \$DEPLOY_DIR..."
-            sudo mkdir -p \$DEPLOY_DIR
-            sudo tar -xzf \$ARCHIVE_PATH -C \$DEPLOY_DIR
+            echo " Cleaning up existing files..."
+            sudo rm -rf ${DEPLOY_DIR:?}/*
 
-            echo "Setting ownership for Apache..."
-            sudo chown -R apache:apache \$DEPLOY_DIR || sudo chown -R www-data:www-data \$DEPLOY_DIR
+            echo " Deploying new files..."
+            sudo mkdir -p $DEPLOY_DIR
+            sudo tar -xzf $ARCHIVE_PATH -C $DEPLOY_DIR
+            sudo chown -R apache:apache $DEPLOY_DIR || sudo chown -R www-data:www-data $DEPLOY_DIR
 
-            echo "Killing any processes on port 80..."
-            sudo fuser -k 80/tcp || true
-
-            echo "Removing stale Apache PID (if any)..."
-            sudo rm -f /run/httpd/httpd.pid || true
-
-            echo "Restarting Apache server..."
+            echo " Restarting Apache..."
             sudo systemctl enable httpd
-            sudo systemctl restart httpd
-            sudo systemctl status httpd --no-pager || true
-
-            echo " Prod deployment complete at http://${{ env.PROD_SERVER }}"
-EOF
+            sudo systemctl restart httpd || sudo systemctl start httpd
+            echo " Production deployment complete!"
+          EOF
