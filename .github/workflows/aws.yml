@@ -24,7 +24,6 @@ jobs:
       
       - name: Create deployment package
         run: |
-          # Package all files except .git and .github
           tar -czf deploy.tar.gz \
             --exclude='.git' \
             --exclude='.github' \
@@ -33,18 +32,28 @@ jobs:
             *.html \
             *.txt
           
-      - uses: actions/upload-artifact@v3
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
         with:
           name: portfolio-build
           path: deploy.tar.gz
+          retention-days: 1  # Automatically cleanup old artifacts
 
   deploy:
     needs: package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v3
+      - name: Download artifact
+        uses: actions/download-artifact@v3
         with:
           name: portfolio-build
+          path: .  # Downloads to current directory
+          
+      - name: Verify downloaded package
+        run: |
+          echo "Downloaded files:"
+          ls -la
+          [ -f "deploy.tar.gz" ] || (echo "Artifact missing!" && exit 1)
           
       - uses: webfactory/ssh-agent@v0.7.0
         with:
@@ -62,21 +71,22 @@ jobs:
           set -e
           DEPLOY_DIR="/var/www/portfolio"
           
-          echo " Creating backup..."
+          echo "Creating backup..."
           sudo mkdir -p /var/www/backups
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
           [ -d "$DEPLOY_DIR" ] && sudo tar -czf /var/www/backups/portfolio-$TIMESTAMP.tar.gz -C $DEPLOY_DIR .
           
-          echo " Deploying new version..."
+          echo "Deploying new version..."
           sudo mkdir -p $DEPLOY_DIR
           sudo tar -xzf /tmp/deploy.tar.gz -C $DEPLOY_DIR
           sudo chown -R nginx:nginx $DEPLOY_DIR
           
-          echo " Deployment complete!"
+          echo "Deployment complete!"
           ls -la $DEPLOY_DIR
           EOF
 
       - name: Verify deployment
         run: |
           echo "Testing deployed application..."
-          curl -
+          curl -sSf http://${{ env.SERVER_IP }} || \
+            (echo "Deployment verification failed!" && exit 1)
