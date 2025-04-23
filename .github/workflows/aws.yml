@@ -20,26 +20,29 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Archive HTML files
-        run: tar -czf static-resume.tar.gz -C ./ .
+        run: |
+          mkdir -p output
+          tar -czf output/static-resume.tar.gz -C . .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: static-resume.tar.gz
+          path: output/static-resume.tar.gz
 
   deploy-dev:
-    name: Deploy to Development EC2
+    name: Deploy to Development
     needs: build
     runs-on: ubuntu-latest
     environment: development
     steps:
-      - name: Download artifact
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
+          path: .
 
-      - name: Setup SSH
+      - name: Install SSH key
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -50,63 +53,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
             DEPLOY_DIR="/var/www/html"
-            ARCHIVE_PATH="/tmp/static-resume.tar.gz"
 
-            echo " Cleaning up existing files..."
+            echo "Cleaning old files..."
             sudo rm -rf ${DEPLOY_DIR:?}/*
 
-            echo " Extracting files..."
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf $ARCHIVE_PATH -C $DEPLOY_DIR
-            sudo chown -R apache:apache $DEPLOY_DIR || sudo chown -R www-data:www-data $DEPLOY_DIR
-
-            echo " Restarting Apache..."
-            sudo systemctl enable httpd
-            sudo systemctl restart httpd || sudo systemctl start httpd
-            echo " Development deployment complete!"
-          EOF
-
-  deploy-prod:
-    name: Deploy to Production EC2
-    needs: deploy-dev
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: static-resume-build
-
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Deploy to Prod EC2
-        run: |
-          scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
-            set -e
-            DEPLOY_DIR="/var/www/html"
-            BACKUP_DIR="/var/www/backups"
-            ARCHIVE_PATH="/tmp/static-resume.tar.gz"
-            TIMESTAMP=$(date +%Y%m%d%H%M%S)
-
-            echo " Backing up existing production files..."
-            sudo mkdir -p $BACKUP_DIR
-            [ -d "$DEPLOY_DIR" ] && sudo tar -czf $BACKUP_DIR/static-resume-$TIMESTAMP.tar.gz -C $DEPLOY_DIR .
-
-            echo " Cleaning up existing files..."
-            sudo rm -rf ${DEPLOY_DIR:?}/*
-
-            echo " Deploying new files..."
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf $ARCHIVE_PATH -C $DEPLOY_DIR
-            sudo chown -R apache:apache $DEPLOY_DIR || sudo chown -R www-data:www-data $DEPLOY_DIR
-
-            echo " Restarting Apache..."
-            sudo systemctl enable httpd
-            sudo systemctl restart httpd || sudo systemctl start httpd
-            echo " Production deployment complete!"
-          EOF
+            echo "
