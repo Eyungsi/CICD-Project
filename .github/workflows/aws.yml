@@ -53,11 +53,17 @@ jobs:
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
+            set -e
+            sudo apt update -y
+            sudo apt install -y nginx curl
+            sudo systemctl enable nginx
+            sudo systemctl start nginx
+
             DEPLOY_DIR="/var/www/static-resume"
             sudo mkdir -p $DEPLOY_DIR
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R nginx:nginx $DEPLOY_DIR
-            echo "Dev deployment complete"
+            echo "✅ Dev deployment complete"
           EOF
 
   deploy-prod:
@@ -82,12 +88,19 @@ jobs:
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
+            set -e
+            sudo apt update -y
+            sudo apt install -y nginx curl
+            sudo systemctl enable nginx
+            sudo systemctl start nginx
+
             DEPLOY_DIR="/var/www/static-resume"
             TIMESTAMP=$(date +%Y%m%d%H%M%S)
             sudo mkdir -p /var/www/backups
             [ -d "$DEPLOY_DIR" ] && sudo tar -czf /var/www/backups/static-resume-$TIMESTAMP.tar.gz -C $DEPLOY_DIR .
+
             sudo mkdir -p $DEPLOY_DIR
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R nginx:nginx $DEPLOY_DIR
-            echo "Prod deployment complete"
+            echo " Prod deployment complete"
           EOF
