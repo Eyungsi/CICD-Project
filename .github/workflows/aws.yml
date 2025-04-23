@@ -1,92 +1,148 @@
-name: Deploy Portfolio to AWS EC2
+name: Deploy Static Resume to AWS EC2
 
 on:
   push:
-    branches: ["main"]
-  workflow_dispatch:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  SERVER_IP: ${{ secrets.PROD_SERVER_IP }}
+  APP_NAME: "static-resume"
+  DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}
+  PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}
 
 jobs:
-  package:
+  build:
+    name: Build Static Site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: npm ci
       
-      - name: List files (debug)
-        run: |
-          echo "Repository contents:"
-          ls -la
-          echo "HTML files:"
-          ls *.html
+    - name: Build static site
+      run: npm run build
       
-      - name: Create deployment package
-        run: |
-          tar -czf deploy.tar.gz \
-            --exclude='.git' \
-            --exclude='.github' \
-            assets/ \
-            forms/ \
-            *.html \
-            *.txt
-          
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: portfolio-build
-          path: deploy.tar.gz
-          retention-days: 1  # Automatically cleanup old artifacts
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: static-resume-build
+        path: build/  # Adjust this path based on your build output directory
 
-  deploy:
-    needs: package
+  deploy-dev:
+    name: Deploy to Development
+    needs: build
     runs-on: ubuntu-latest
+    environment: development
     steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: portfolio-build
-          path: .  # Downloads to current directory
+    - uses: actions/checkout@v4
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: static-resume-build
+        
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Deploy to Dev Server
+      run: |
+        echo "Deploying to Dev Server (${{ env.DEV_SERVER }})"
+        # Create a tarball of the build files
+        tar -czf static-resume.tar.gz -C build/ .
+        
+        # Transfer files to server
+        scp -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          static-resume.tar.gz \
+          ec2-user@${{ env.DEV_SERVER }}:/tmp/
           
-      - name: Verify downloaded package
-        run: |
-          echo "Downloaded files:"
-          ls -la
-          [ -f "deploy.tar.gz" ] || (echo "Artifact missing!" && exit 1)
-          
-      - uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-          
-      - name: Deploy to EC2
-        run: |
-          scp -o StrictHostKeyChecking=no \
-              deploy.tar.gz \
-              ec2-user@${{ env.SERVER_IP }}:/tmp/
-              
-          ssh -o StrictHostKeyChecking=no \
-              ec2-user@${{ env.SERVER_IP }} << 'EOF'
+        # SSH and deploy files
+        ssh -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          ec2-user@${{ env.DEV_SERVER }} << 'EOSSH'
           #!/bin/bash
           set -e
-          DEPLOY_DIR="/var/www/portfolio"
-          
-          echo "Creating backup..."
-          sudo mkdir -p /var/www/backups
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          [ -d "$DEPLOY_DIR" ] && sudo tar -czf /var/www/backups/portfolio-$TIMESTAMP.tar.gz -C $DEPLOY_DIR .
-          
-          echo "Deploying new version..."
-          sudo mkdir -p $DEPLOY_DIR
-          sudo tar -xzf /tmp/deploy.tar.gz -C $DEPLOY_DIR
-          sudo chown -R nginx:nginx $DEPLOY_DIR
-          
+          echo "Deploying static resume..."
+          sudo mkdir -p /var/www/static-resume
+          sudo tar -xzf /tmp/static-resume.tar.gz -C /var/www/static-resume
+          sudo chown -R nginx:nginx /var/www/static-resume
           echo "Deployment complete!"
-          ls -la $DEPLOY_DIR
-          EOF
+          EOSSH
+        
+        # Verify deployment
+        curl -sSf http://${{ env.DEV_SERVER }} || \
+          (echo "Deployment verification failed!" && exit 1)
 
-      - name: Verify deployment
-        run: |
-          echo "Testing deployed application..."
-          curl -sSf http://${{ env.SERVER_IP }} || \
-            (echo "Deployment verification failed!" && exit 1)
+  deploy-prod:
+    name: Deploy to Production
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: static-resume-build
+        
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Deploy to Prod Server
+      run: |
+        echo "Deploying to Prod Server (${{ env.PROD_SERVER }})"
+        tar -czf static-resume.tar.gz -C build/ .
+        
+        scp -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          static-resume.tar.gz \
+          ec2-user@${{ env.PROD_SERVER }}:/tmp/
+          
+        ssh -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          ec2-user@${{ env.PROD_SERVER }} << 'EOSSH'
+          #!/bin/bash
+          set -e
+          echo "Deploying static resume to production..."
+          # Create backup of current version
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          sudo mkdir -p /var/www/backups
+          sudo tar -czf /var/www/backups/static-resume-$TIMESTAMP.tar.gz -C /var/www/static-resume .
+          
+          # Deploy new version
+          sudo mkdir -p /var/www/static-resume
+          sudo tar -xzf /tmp/static-resume.tar.gz -C /var/www/static-resume
+          sudo chown -R nginx:nginx /var/www/static-resume
+          echo "Production deployment complete!"
+          EOSSH
+        
+        curl -sSf http://${{ env.PROD_SERVER }} || \
+          (echo "Production deployment verification failed!" && exit 1)
