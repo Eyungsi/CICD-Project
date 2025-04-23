@@ -54,16 +54,10 @@ jobs:
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -e
-            sudo dnf update -y
-            sudo dnf install -y nginx  # Avoid curl to prevent conflicts
-            sudo systemctl enable nginx
-            sudo systemctl start nginx
-
-            DEPLOY_DIR="/var/www/static-resume"
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            sudo chown -R nginx:nginx $DEPLOY_DIR
-            echo "Dev deployment complete"
+            DEPLOY_DIR="/home/ec2-user/static-resume"
+            mkdir -p $DEPLOY_DIR
+            tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            echo " Dev deployment complete to Amazon Linux"
           EOF
 
   deploy-prod:
@@ -89,14 +83,8 @@ jobs:
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -e
-            sudo dnf update -y
-            sudo dnf install -y nginx  # Avoid curl to prevent conflicts
-            sudo systemctl enable nginx
-            sudo systemctl start nginx
-
-            DEPLOY_DIR="/var/www/static-resume"
-            sudo mkdir -p $DEPLOY_DIR
-            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
-            sudo chown -R nginx:nginx $DEPLOY_DIR
-            echo "Production deployment complete"
+            DEPLOY_DIR="/home/ec2-user/static-resume"
+            mkdir -p $DEPLOY_DIR
+            tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            echo " Production deployment complete to Amazon Linux"
           EOF
