@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  # Change if your site is in a subfolder like 'dist/'
+          path: ./  # Adjust if your site is in a subfolder
 
   deploy-dev:
     name: Deploy to Development
@@ -48,7 +48,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to Dev EC2
+      - name: Deploy to Dev EC2 and Start Apache
         run: |
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
@@ -58,7 +58,12 @@ jobs:
             sudo mkdir -p $DEPLOY_DIR
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
-            echo " Dev deployment to /var/www/html complete"
+
+            sudo dnf install -y httpd
+            sudo systemctl enable httpd
+            sudo systemctl start httpd
+
+            echo " Dev deployment complete and Apache started"
           EOF
 
   deploy-prod:
@@ -78,7 +83,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Prod EC2
+      - name: Deploy to Prod EC2 and Start Apache
         run: |
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
@@ -88,5 +93,10 @@ jobs:
             sudo mkdir -p $DEPLOY_DIR
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             sudo chown -R ec2-user:ec2-user $DEPLOY_DIR
-            echo " Production deployment to /var/www/html complete"
+
+            sudo dnf install -y httpd
+            sudo systemctl enable httpd
+            sudo systemctl start httpd
+
+            echo "Production deployment complete and Apache started"
           EOF
