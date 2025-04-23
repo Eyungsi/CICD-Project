@@ -41,42 +41,122 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Deploy to Dev EC2
         run: |
           tar -czf static-resume.tar.gz -C build/ .
           scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
-            set -e
+            set -ex
             DEPLOY_DIR="/var/www/html"
             
-            # Stop Apache before deployment
+            # Verify/install Apache
+            if ! command -v httpd &> /dev/null; then
+              sudo dnf install -y httpd
+              sudo systemctl enable httpd
+            fi
+            
+            # Stop Apache if running
             sudo systemctl stop httpd || true
             
-            # Clean the deployment directory
+            # Clean deployment directory
             sudo rm -rf $DEPLOY_DIR/*
-            
-            # Create directory if it doesn't exist
             sudo mkdir -p $DEPLOY_DIR
             
-            # Extract new files
+            # Extract files
             sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
             
-            # Set proper permissions
+            # Set permissions
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
             
-            # Start Apache
-            sudo systemctl start httpd
+            # SELinux context
+            if command -v sestatus &> /dev/null && sudo sestatus | grep -q "enabled"; then
+              sudo restorecon -Rv $DEPLOY_DIR
+            fi
             
-            # Verify Apache is running
+            # Start Apache with retries
+            for i in {1..3}; do
+              if sudo systemctl start httpd; then
+                echo "Apache started successfully"
+                break
+              else
+                echo "Attempt $i failed, checking logs..."
+                sudo journalctl -u httpd --no-pager -n 20
+                if [ $i -eq 3 ]; then exit 1; fi
+                sleep 5
+              fi
+            done
+            
+            echo "Dev deployment complete"
+          EOF
+
+  deploy-prod:
+    name: Deploy to Production
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: static-resume-build
+          path: build/
+
+      - uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to Prod EC2
+        run: |
+          tar -czf static-resume.tar.gz -C build/ .
+          scp -o StrictHostKeyChecking=no static-resume.tar.gz ec2-user@${{ env.PROD_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
+            set -ex
+            DEPLOY_DIR="/var/www/html"
+            
+            # Verify/install Apache
+            if ! command -v httpd &> /dev/null; then
+              sudo dnf install -y httpd
+              sudo systemctl enable httpd
+            fi
+            
+            # Stop Apache if running
+            sudo systemctl stop httpd || true
+            
+            # Clean deployment directory
+            sudo rm -rf $DEPLOY_DIR/*
+            sudo mkdir -p $DEPLOY_DIR
+            
+            # Extract files
+            sudo tar -xzf /tmp/static-resume.tar.gz -C $DEPLOY_DIR
+            
+            # Set permissions
+            sudo chown -R apache:apache $DEPLOY_DIR
+            sudo chmod -R 755 $DEPLOY_DIR
+            
+            # SELinux context
+            if command -v sestatus &> /dev/null && sudo sestatus | grep -q "enabled"; then
+              sudo restorecon -Rv $DEPLOY_DIR
+            fi
+            
+            # Verify config
+            sudo apachectl configtest
+            
+            # Start Apache with retries
+            for i in {1..3}; do
+              if sudo systemctl start httpd; then
+                echo "Apache started successfully"
+                break
+              else
+                echo "Attempt $i failed, checking logs..."
+                sudo journalctl -u httpd --no-pager -n 20
+                if [ $i -eq 3 ]; then exit 1; fi
+                sleep 5
+              fi
+            done
+            
+            # Verify status
             sudo systemctl status httpd --no-pager
-            
-            echo "Dev deployment to $DEPLOY_DIR complete. Apache restarted."
+            echo "Production deployment complete"
           EOF
