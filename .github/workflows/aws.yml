@@ -23,7 +23,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: static-resume-build
-          path: ./  #or ./build if your files live in a subfolder
+          path: ./  # or ./build if your files live in a subfolder
 
   deploy-dev:
     name: Deploy to Development EC2
@@ -73,7 +73,7 @@ jobs:
             echo "Dev deployment complete"
           EOF
 
-deploy-prod:
+  deploy-prod:
     name: Deploy to Production EC2
     needs: deploy-dev
     if: github.ref == 'refs/heads/main'
