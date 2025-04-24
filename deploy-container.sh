@@ -30,7 +30,7 @@ docker stop static-resume || true
 docker rm static-resume || true
 
 echo " Starting new container on port $PORT..."
-docker run -d --name static-resume -p "$PORT":8080 \
+docker run -d --name static-resume -p "$PORT":80 \
   -e ENV="$ENV" \
   "$IMAGE_NAME":latest
 
