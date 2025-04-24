@@ -22,12 +22,10 @@ jobs:
         run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
       - name: Build Docker image
-        run: |
-          docker build -t $IMAGE_NAME:latest .
+        run: docker build -t $IMAGE_NAME:latest .
 
       - name: Push Docker image
-        run: |
-          docker push $IMAGE_NAME:latest
+        run: docker push $IMAGE_NAME:latest
 
   deploy-dev:
     name: Deploy to Development EC2
@@ -40,25 +38,11 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Install Docker & Deploy on Dev EC2
+      - name: Copy and execute deploy script on Dev EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << EOF
-            if ! command -v docker &> /dev/null; then
-              sudo yum update -y
-              sudo yum install -y docker
-              sudo systemctl enable docker
-              sudo systemctl start docker
-              sudo usermod -aG docker ec2-user
-              newgrp docker
-            fi
-
-            docker pull $IMAGE_NAME:latest
-            docker stop static-resume || true
-            docker rm static-resume || true
-            docker run -d --name static-resume -p 8080:80 \
-              -e ENV=development \
-              $IMAGE_NAME:latest
-          EOF
+          scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.DEV_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} \
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME development 8080"
 
   deploy-prod:
     name: Deploy to Production EC2
@@ -72,22 +56,8 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Install Docker & Deploy on Prod EC2
+      - name: Copy and execute deploy script on Prod EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << EOF
-            if ! command -v docker &> /dev/null; then
-              sudo yum update -y
-              sudo yum install -y docker
-              sudo systemctl enable docker
-              sudo systemctl start docker
-              sudo usermod -aG docker ec2-user
-              newgrp docker
-            fi
-
-            docker pull $IMAGE_NAME:latest
-            docker stop static-resume || true
-            docker rm static-resume || true
-            docker run -d --name static-resume -p 8080:80 \
-              -e ENV=production \
-              $IMAGE_NAME:latest
-          EOF
+          scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME production 8080"
