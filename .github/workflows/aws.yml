@@ -15,7 +15,7 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
@@ -33,6 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: development
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
@@ -51,6 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
@@ -60,4 +66,4 @@ jobs:
         run: |
           scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME production 8080"
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME production 80"
