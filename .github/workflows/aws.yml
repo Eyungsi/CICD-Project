@@ -50,15 +50,22 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      - name: Debug tag and image
+        run: |
+          echo "Tag: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "Image: ${{ env.IMAGE_NAME }}"
+
       - name: Copy and execute deploy script on Dev EC2
         run: |
+          TAG=${{ needs.build-and-push.outputs.image_tag }}
+          IMAGE_NAME=${{ env.IMAGE_NAME }}
           scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME ${{ needs.build-and-push.outputs.image_tag }} development 8080"
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME $TAG development 8080"
 
   deploy-prod:
     name: Deploy to Production EC2
-    needs: deploy-dev
+    needs: [deploy-dev, build-and-push]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
@@ -71,8 +78,15 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      - name: Debug tag and image
+        run: |
+          echo "Tag: ${{ needs.build-and-push.outputs.image_tag }}"
+          echo "Image: ${{ env.IMAGE_NAME }}"
+
       - name: Copy and execute deploy script on Prod EC2
         run: |
+          TAG=${{ needs.build-and-push.outputs.image_tag }}
+          IMAGE_NAME=${{ env.IMAGE_NAME }}
           scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME ${{ needs.build-and-push.outputs.image_tag }} production 8080"
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME $TAG production 8080"
