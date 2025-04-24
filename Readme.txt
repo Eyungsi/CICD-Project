@@ -7,127 +7,109 @@ cp -r static-resume/* /var/www/html/
 systemctl start httpd
 systemctl enable httpd
 .......................................................................................................................................................
-Static Resume Deployment to AWS EC2 using GitHub Actions
+GitHub Actions Workflow: Deploy Static Resume to AWS EC2
+
+# Static Resume Deployment to AWS EC2 using GitHub Actions
 
 This README describes the GitHub Actions workflow used to build and deploy a static resume website to AWS EC2 instances for both development and production environments. The CI/CD pipeline automates the build and deployment steps, ensuring consistent delivery across environments.
 
-Workflow Overview
-
+## Workflow Overview
 This GitHub Actions workflow is triggered:
-
-On every push to the main branch
-
-Or manually via the GitHub Actions UI (workflow_dispatch)
+- On every push to the `main` branch
+- Or manually via the GitHub Actions UI (`workflow_dispatch`)
 
 It consists of three jobs:
+- `build`: Prepares the static files
+- `deploy-dev`: Deploys to the development EC2 instance
+- `deploy-prod`: Deploys to the production EC2 instance, only after successful dev deployment
 
-build: Prepares the static files
-
-deploy-dev: Deploys to the development EC2 instance
-
-deploy-prod: Deploys to the production EC2 instance, only after successful dev deployment
-
-Environments and Secrets
-
+## Environments and Secrets
 The workflow requires the following secrets to be configured in your GitHub repository:
+- `AWS_REGION`: AWS region (e.g., us-east-1)
+- `DEV_SERVER_IP`: Public IP address of the development EC2 instance
+- `PROD_SERVER_IP`: Public IP address of the production EC2 instance
+- `SSH_PRIVATE_KEY`: SSH private key for accessing EC2 instances
 
-AWS_REGION: AWS region (e.g., us-east-1)
-
-DEV_SERVER_IP: Public IP address of the development EC2 instance
-
-PROD_SERVER_IP: Public IP address of the production EC2 instance
-
-SSH_PRIVATE_KEY: SSH private key for accessing EC2 instances
-
-Complete GitHub Actions Workflow with Explanations
-
-# Define the name of the workflow and trigger conditions
-name: Deploy Static Resume to AWS EC2
+## Complete GitHub Actions Workflow with Inline Comments
+```yaml
+name: Deploy Static Resume to AWS EC2  # Name of the workflow
 
 on:
   push:
-    branches: ["main"]           # Trigger on push to main
-  workflow_dispatch:             # Allow manual trigger
+    branches: ["main"]               # Trigger workflow on push to main branch
+  workflow_dispatch:                  # Allow manual trigger via GitHub UI
 
-# Set environment-wide variables
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  APP_NAME: "static-resume"
-  DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}
-  PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}     # AWS region (e.g., us-east-1)
+  APP_NAME: "static-resume"                 # App name (used for readability)
+  DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}  # IP address of the Dev EC2 server
+  PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}# IP address of the Prod EC2 server
 
 jobs:
-  # First job to prepare the static files
   build:
     name: Prepare Static Site
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest                 # Use latest Ubuntu runner
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4  # Pull the latest code from GitHub
+        uses: actions/checkout@v4         # Pulls the latest code from the repo
 
       - name: Upload HTML files
-        uses: actions/upload-artifact@v4  # Upload files as artifact
+        uses: actions/upload-artifact@v4  # Uploads build files for use in next jobs
         with:
           name: static-resume-build
-          path: ./  # or ./build if files live in a subfolder
+          path: ./                        # Set to ./build if using a build subfolder
 
-  # Deploy the site to the development environment
   deploy-dev:
     name: Deploy to Development EC2
-    needs: build
+    needs: build                          # Wait for build job to finish
     runs-on: ubuntu-latest
-    environment: development
+    environment: development              # Targets the development environment
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: static-resume-build
-          path: build/
+          path: build/                    # Save downloaded files into build/ folder
 
       - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.7.0  # Add SSH private key to agent
+        uses: webfactory/ssh-agent@v0.7.0 # Setup SSH to connect to EC2
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Deploy to Dev EC2
         run: |
-          # Use rsync to copy files to the development EC2 instance
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/  # Sync files to /tmp on EC2
 
-          # SSH into the EC2 instance to configure Apache and deploy files
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
-            set -ex
-            DEPLOY_DIR="/var/www/html/dev"
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'  # SSH into EC2
+            set -ex                                       # Enable debug and exit on error
+            DEPLOY_DIR="/var/www/html/dev"               # Set deploy directory
 
-            # Install Apache if not installed
-            if ! command -v httpd &>/dev/null; then
+            if ! command -v httpd &>/dev/null; then       # Install Apache if not installed
               sudo dnf install -y httpd
               sudo systemctl enable httpd
             fi
 
-            sudo systemctl stop httpd || true
-            sudo fuser -k 80/tcp || true
-            sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
-            sudo chown -R apache:apache $DEPLOY_DIR
-            sudo chmod -R 755 $DEPLOY_DIR
+            sudo systemctl stop httpd || true             # Stop Apache (ignore errors)
+            sudo fuser -k 80/tcp || true                  # Kill any process on port 80
+            sudo rm -rf $DEPLOY_DIR/*                    # Remove previous site files
+            sudo mkdir -p $DEPLOY_DIR                    # Ensure deploy directory exists
+            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/ # Copy files to deploy directory
+            sudo chown -R apache:apache $DEPLOY_DIR      # Change ownership to Apache
+            sudo chmod -R 755 $DEPLOY_DIR                # Set permissions
 
-            # Restore SELinux context if required
-            if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
+            if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then  # Restore SELinux context if enabled
               sudo restorecon -Rv $DEPLOY_DIR
             fi
 
-            sudo apachectl configtest
-            sudo systemctl start httpd
+            sudo apachectl configtest                    # Test Apache configuration
+            sudo systemctl start httpd                   # Start Apache
             echo "Dev deployment complete"
           EOF
 
-  # Deploy the site to the production environment
   deploy-prod:
     name: Deploy to Production EC2
-    needs: deploy-dev  # Only run after successful dev deploy
-    if: github.ref == 'refs/heads/main'
+    needs: deploy-dev                   # Wait for dev deployment to complete
+    if: github.ref == 'refs/heads/main' # Only run on main branch
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -138,41 +120,42 @@ jobs:
           path: build/
 
       - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.7.0  # Set up SSH
+        uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Deploy to Prod EC2
         run: |
-          # Copy files to production EC2 server
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/  # Sync files to production EC2
 
-          # SSH into production EC2 and deploy the files
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
-            set -ex
-            DEPLOY_DIR="/var/www/html/prod"
+            set -ex                                       # Enable debug and exit on error
+            DEPLOY_DIR="/var/www/html/prod"              # Set deploy directory
 
-            if ! command -v httpd &>/dev/null; then
+            if ! command -v httpd &>/dev/null; then       # Install Apache if not installed
               sudo dnf install -y httpd
               sudo systemctl enable httpd
             fi
 
-            sudo systemctl stop httpd || true
-            sudo fuser -k 80/tcp || true
-            sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
-            sudo chown -R apache:apache $DEPLOY_DIR
-            sudo chmod -R 755 $DEPLOY_DIR
+            sudo systemctl stop httpd || true             # Stop Apache if running
+            sudo fuser -k 80/tcp || true                  # Kill any process using port 80
+            sudo rm -rf $DEPLOY_DIR/*                    # Clear old files
+            sudo mkdir -p $DEPLOY_DIR                    # Create the directory if needed
+            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/ # Copy new site files
+            sudo chown -R apache:apache $DEPLOY_DIR      # Set correct ownership
+            sudo chmod -R 755 $DEPLOY_DIR                # Set correct permissions
 
-            if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
+            if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then  # Restore SELinux context if applicable
               sudo restorecon -Rv $DEPLOY_DIR
             fi
 
-            sudo apachectl configtest
-            sudo systemctl start httpd
-            curl -I http://localhost/prod || true
+            sudo apachectl configtest                    # Test Apache configuration
+            sudo systemctl start httpd                   # Start Apache web server
+            curl -I http://localhost/prod || true        # Optional: verify response from local prod path
             echo "Production deployment complete"
           EOF
+```
 
-          
+---
+This complete document includes workflow setup, explanations for each line, and inline comments to guide new users through the deployment process from source code to EC2 production server.
+
