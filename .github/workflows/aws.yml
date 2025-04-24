@@ -75,4 +75,4 @@ jobs:
         run: |
           scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME ${{ needs.build-and-push.outputs.image_tag }} production 80"
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME ${{ needs.build-and-push.outputs.image_tag }} production 8080"
