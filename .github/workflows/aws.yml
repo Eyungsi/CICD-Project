@@ -55,7 +55,7 @@ jobs:
             docker pull $IMAGE_NAME:latest
             docker stop static-resume || true
             docker rm static-resume || true
-            docker run -d --name static-resume -p 80:80 \
+            docker run -d --name static-resume -p 8080:80 \
               -e ENV=development \
               $IMAGE_NAME:latest
           EOF
@@ -87,7 +87,7 @@ jobs:
             docker pull $IMAGE_NAME:latest
             docker stop static-resume || true
             docker rm static-resume || true
-            docker run -d --name static-resume -p 80:80 \
+            docker run -d --name static-resume -p 8080:80 \
               -e ENV=production \
               $IMAGE_NAME:latest
           EOF
