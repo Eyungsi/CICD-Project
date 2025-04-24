@@ -3,43 +3,22 @@ set -ex
 
 DEPLOY_DIR="/var/www/html/dev"
 
-# Detect OS and install Apache accordingly
-if command -v apt &>/dev/null; then
+# Install Apache if it's not already installed
+if ! command -v apache2 &>/dev/null; then
   sudo apt update
   sudo apt install -y apache2
-  APACHE_SERVICE="apache2"
-  CONFIGTEST_CMD="apache2ctl configtest"
-elif command -v dnf &>/dev/null; then
-  sudo dnf install -y httpd
-  APACHE_SERVICE="httpd"
-  CONFIGTEST_CMD="apachectl configtest"
-elif command -v yum &>/dev/null; then
-  sudo yum install -y httpd
-  APACHE_SERVICE="httpd"
-  CONFIGTEST_CMD="apachectl configtest"
-else
-  echo "No supported package manager found!"
-  exit 1
+  sudo systemctl enable apache2
 fi
 
-# Stop existing Apache service
-sudo systemctl stop $APACHE_SERVICE || true
+# Stop Apache before deploying
+sudo systemctl stop apache2 || true
 sudo fuser -k 80/tcp || true
 
-# Deploy content
+# Clear old content and copy new files
 sudo rm -rf $DEPLOY_DIR/*
 sudo mkdir -p $DEPLOY_DIR
 sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
-sudo chown -R apache:apache $DEPLOY_DIR || sudo chown -R www-data:www-data $DEPLOY_DIR
+sudo chown -R www-data:www-data $DEPLOY_DIR
 sudo chmod -R 755 $DEPLOY_DIR
 
-# Restore SELinux context if enabled
-if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
-  sudo restorecon -Rv $DEPLOY_DIR
-fi
-
-# Validate Apache config and restart service
-$CONFIGTEST_CMD
-sudo systemctl start $APACHE_SERVICE
-
-echo "Dev deployment complete"
+# Validate and restart
