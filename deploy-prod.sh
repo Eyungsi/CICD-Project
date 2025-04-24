@@ -4,16 +4,16 @@ set -ex
 DEPLOY_DIR="/var/www/html/prod"
 
 # Detect OS and install Apache accordingly
-if command -v apt &>/prod/null; then
+if command -v apt &>/dev/null; then
   sudo apt update
   sudo apt install -y apache2
   APACHE_SERVICE="apache2"
   CONFIGTEST_CMD="apache2ctl configtest"
-elif command -v dnf &>/prod/null; then
+elif command -v dnf &>/dev/null; then
   sudo dnf install -y httpd
   APACHE_SERVICE="httpd"
   CONFIGTEST_CMD="apachectl configtest"
-elif command -v yum &>/prod/null; then
+elif command -v yum &>/dev/null; then
   sudo yum install -y httpd
   APACHE_SERVICE="httpd"
   CONFIGTEST_CMD="apachectl configtest"
@@ -34,7 +34,7 @@ sudo chown -R apache:apache $DEPLOY_DIR || sudo chown -R www-data:www-data $DEPL
 sudo chmod -R 755 $DEPLOY_DIR
 
 # Restore SELinux context if enabled
-if command -v sestatus &>/prod/null && sudo sestatus | grep -q enabled; then
+if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
   sudo restorecon -Rv $DEPLOY_DIR
 fi
 
@@ -42,4 +42,6 @@ fi
 $CONFIGTEST_CMD
 sudo systemctl start $APACHE_SERVICE
 
-echo "Prod deployment complete"
+# Verify deployment
+curl -I http://localhost/prod || true
+echo "Production deployment complete"
