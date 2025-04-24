@@ -48,9 +48,8 @@ jobs:
 
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
             set -ex
-            DEPLOY_DIR="/var/www/html"
+            DEPLOY_DIR="/var/www/html/dev"
 
-            # Install Apache if not already
             if ! command -v httpd &>/dev/null; then
               sudo dnf install -y httpd
               sudo systemctl enable httpd
@@ -59,11 +58,11 @@ jobs:
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
             sudo rm -rf $DEPLOY_DIR/*
+            sudo mkdir -p $DEPLOY_DIR
             sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
 
-            # Restore SELinux context if enabled
             if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
               sudo restorecon -Rv $DEPLOY_DIR
             fi
@@ -97,7 +96,7 @@ jobs:
 
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
             set -ex
-            DEPLOY_DIR="/var/www/html"
+            DEPLOY_DIR="/var/www/html/prod"
 
             if ! command -v httpd &>/dev/null; then
               sudo dnf install -y httpd
@@ -107,6 +106,7 @@ jobs:
             sudo systemctl stop httpd || true
             sudo fuser -k 80/tcp || true
             sudo rm -rf $DEPLOY_DIR/*
+            sudo mkdir -p $DEPLOY_DIR
             sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
             sudo chown -R apache:apache $DEPLOY_DIR
             sudo chmod -R 755 $DEPLOY_DIR
@@ -117,6 +117,6 @@ jobs:
 
             sudo apachectl configtest
             sudo systemctl start httpd
-            curl -I http://localhost || true
+            curl -I http://localhost/prod || true
             echo "Production deployment complete"
           EOF
