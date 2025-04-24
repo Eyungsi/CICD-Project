@@ -31,6 +31,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: development
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -42,35 +45,9 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Dev EC2
+      - name: Run Dev Deployment Script
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
-
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} << 'EOF'
-            set -ex
-            DEPLOY_DIR="/var/www/html/dev"
-
-            if ! command -v httpd &>/dev/null; then
-              sudo dnf install -y httpd
-              sudo systemctl enable httpd
-            fi
-
-            sudo systemctl stop httpd || true
-            sudo fuser -k 80/tcp || true
-            sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
-            sudo chown -R apache:apache $DEPLOY_DIR
-            sudo chmod -R 755 $DEPLOY_DIR
-
-            if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
-              sudo restorecon -Rv $DEPLOY_DIR
-            fi
-
-            sudo apachectl configtest
-            sudo systemctl start httpd
-            echo "Dev deployment complete"
-          EOF
+          bash deploy-dev.sh
 
   deploy-prod:
     name: Deploy to Production EC2
@@ -79,6 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -90,33 +70,6 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Deploy to Prod EC2
+      - name: Run Prod Deployment Script
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
-
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} << 'EOF'
-            set -ex
-            DEPLOY_DIR="/var/www/html/prod"
-
-            if ! command -v httpd &>/dev/null; then
-              sudo dnf install -y httpd
-              sudo systemctl enable httpd
-            fi
-
-            sudo systemctl stop httpd || true
-            sudo fuser -k 80/tcp || true
-            sudo rm -rf $DEPLOY_DIR/*
-            sudo mkdir -p $DEPLOY_DIR
-            sudo cp -r /tmp/static-resume/* $DEPLOY_DIR/
-            sudo chown -R apache:apache $DEPLOY_DIR
-            sudo chmod -R 755 $DEPLOY_DIR
-
-            if command -v sestatus &>/dev/null && sudo sestatus | grep -q enabled; then
-              sudo restorecon -Rv $DEPLOY_DIR
-            fi
-
-            sudo apachectl configtest
-            sudo systemctl start httpd
-            curl -I http://localhost/prod || true
-            echo "Production deployment complete"
-          EOF
+          bash deploy-prod.sh
