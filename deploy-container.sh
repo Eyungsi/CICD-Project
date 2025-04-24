@@ -12,7 +12,7 @@ if [[ -z "$IMAGE_NAME" || -z "$TAG" || -z "$ENV" || -z "$PORT" ]]; then
   exit 1
 fi
 
-echo " Checking for Docker..."
+echo "Checking for Docker..."
 if ! command -v docker &> /dev/null; then
   echo " Installing Docker..."
   sudo yum update -y
@@ -26,7 +26,7 @@ fi
 echo " Pulling image: $IMAGE_NAME:$TAG"
 docker pull "$IMAGE_NAME:$TAG"
 
-echo "Stopping and removing old container..."
+echo " Stopping and removing old container..."
 docker stop static-resume || true
 docker rm static-resume || true
 
@@ -35,4 +35,4 @@ docker run -d --name static-resume -p "$PORT":8080 \
   -e ENV="$ENV" \
   "$IMAGE_NAME:$TAG"
 
-echo "Deployment to $ENV completed!"
+echo " Deployment to $ENV completed!"
