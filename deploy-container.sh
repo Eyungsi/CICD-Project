@@ -3,11 +3,12 @@
 set -e
 
 IMAGE_NAME=$1
-ENV=$2
-PORT=$3
+TAG=$2
+ENV=$3
+PORT=$4
 
-if [[ -z "$IMAGE_NAME" || -z "$ENV" || -z "$PORT" ]]; then
-  echo "Usage: $0 <IMAGE_NAME> <ENV> <PORT>"
+if [[ -z "$IMAGE_NAME" || -z "$TAG" || -z "$ENV" || -z "$PORT" ]]; then
+  echo "Usage: $0 <IMAGE_NAME> <TAG> <ENV> <PORT>"
   exit 1
 fi
 
@@ -22,16 +23,16 @@ if ! command -v docker &> /dev/null; then
   newgrp docker
 fi
 
-echo " Pulling latest image: $IMAGE_NAME"
-docker pull "$IMAGE_NAME":latest
+echo " Pulling image: $IMAGE_NAME:$TAG"
+docker pull "$IMAGE_NAME:$TAG"
 
-echo " Stopping and removing old container..."
+echo "Stopping and removing old container..."
 docker stop static-resume || true
 docker rm static-resume || true
 
-echo " Starting new container on port $PORT..."
-docker run -d --name static-resume -p "$PORT":80 \
+echo " Running container..."
+docker run -d --name static-resume -p "$PORT":8080 \
   -e ENV="$ENV" \
-  "$IMAGE_NAME":latest
+  "$IMAGE_NAME:$TAG"
 
-echo "Deployment to $ENV completed successfully!"
+echo "Deployment to $ENV completed!"
