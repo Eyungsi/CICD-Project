@@ -45,9 +45,13 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Run Dev Deployment Script
+      - name: Transfer files to Dev EC2
         run: |
-          bash deploy-dev.sh
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
+
+      - name: Run Dev Deployment Script on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} 'bash -s' < ./deploy-dev.sh
 
   deploy-prod:
     name: Deploy to Production EC2
@@ -70,6 +74,10 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Run Prod Deployment Script
+      - name: Transfer files to Prod EC2
         run: |
-          bash deploy-prod.sh
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
+
+      - name: Run Prod Deployment Script on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} 'bash -s' < ./deploy-prod.sh
