@@ -6,52 +6,50 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  APP_NAME: "static-resume"
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/static-resume
   DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}
   PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}
 
 jobs:
-  build:
-    name: Prepare Static Site
+  build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Upload HTML files
-        uses: actions/upload-artifact@v4
-        with:
-          name: static-resume-build
-          path: ./  # or ./build if your files live in a subfolder
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:latest .
+
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE_NAME:latest
 
   deploy-dev:
     name: Deploy to Development EC2
-    needs: build
+    needs: build-and-push
     runs-on: ubuntu-latest
     environment: development
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: static-resume-build
-          path: build/
-
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Transfer files to Dev EC2
+      - name: Deploy Docker container on Dev EC2
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.DEV_SERVER }}:/tmp/static-resume/
-
-      - name: Run Dev Deployment Script on EC2
-        run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} 'bash -s' < ./deploy-dev.sh
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ env.DEV_SERVER }} << EOF
+            docker pull $IMAGE_NAME:latest
+            docker stop static-resume || true
+            docker rm static-resume || true
+            docker run -d --name static-resume -p 80:80 \
+              -e ENV=development \
+              $IMAGE_NAME:latest
+          EOF
 
   deploy-prod:
     name: Deploy to Production EC2
@@ -60,24 +58,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: static-resume-build
-          path: build/
-
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Transfer files to Prod EC2
+      - name: Deploy Docker container on Prod EC2
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" build/ ec2-user@${{ env.PROD_SERVER }}:/tmp/static-resume/
-
-      - name: Run Prod Deployment Script on EC2
-        run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} 'bash -s' < ./deploy-prod.sh
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ env.PROD_SERVER }} << EOF
+            docker pull $IMAGE_NAME:latest
+            docker stop static-resume || true
+            docker rm static-resume || true
+            docker run -d --name static-resume -p 80:80 \
+              -e ENV=production \
+              $IMAGE_NAME:latest
+          EOF
