@@ -8,6 +8,6 @@ RUN rm -rf /usr/share/nginx/html/*
 COPY . /usr/share/nginx/html
 
 # Optional: Expose port 80 (already handled by nginx, but good for clarity)
-EXPOSE 80
+EXPOSE 8080
 
 # Nginx runs automatically with the base image as the entrypoint
