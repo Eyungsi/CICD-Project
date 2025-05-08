@@ -5,8 +5,6 @@ on:
     branches: [ "main" ]
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: static-resume
   CONTAINER_NAME: static-resume-container
   APP_PORT: 80
 
@@ -19,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
-      # No image_uri output since it contains secrets
     
     steps:
     - name: Checkout
@@ -27,20 +24,14 @@ jobs:
 
     - name: Set image tag
       id: set-tag
-      run: |
-        TAG=$(git rev-parse --short HEAD)
-        if [ -z "$TAG" ]; then
-          TAG="latest"
-        fi
-        echo "Using tag: $TAG"
-        echo "tag=$TAG" >> $GITHUB_OUTPUT
+      run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -50,17 +41,8 @@ jobs:
 
     - name: Build and push image
       run: |
-        echo "Building Docker image..."
-        docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }} .
-        
-        echo "Pushing to ECR..."
-        docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }}
-
-    - name: Upload deployment script
-      uses: actions/upload-artifact@v4
-      with:
-        name: deploy-script
-        path: deploy-container.sh
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }} .
+        docker push ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }}
 
   deploy-dev:
     name: Deploy to Dev EC2
@@ -69,40 +51,44 @@ jobs:
     environment: development
     
     steps:
-    - name: Download deployment script
-      uses: actions/download-artifact@v4
-      with:
-        name: deploy-script
-
-    - name: Make script executable
-      run: chmod +x deploy-container.sh
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Verify Dev Server IP
+      run: |
+        if [ -z "${{ secrets.DEV_SERVER_IP }}" ]; then
+          echo "::error::DEV_SERVER_IP secret is missing"
+          exit 1
+        fi
 
     - name: Deploy to Dev EC2
       uses: appleboy/ssh-action@master
       with:
-        host: ${{ secrets.DEV_EC2_HOST }}
+        host: ${{ secrets.DEV_SERVER_IP }}
         username: ec2-user
-        key: ${{ secrets.DEV_EC2_SSH_KEY }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 22
         script: |
-          echo "=== Starting Dev Deployment ==="
+          echo "=== Starting Dev Deployment to ${{ secrets.DEV_SERVER_IP }} ==="
           
-          # Get ECR registry URL from build job
-          REGISTRY=$(echo "${{ steps.login-ecr.outputs.registry }}" | cut -d'/' -f1)
-          FULL_IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}"
+          # Login to ECR
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+            sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
           
-          # Execute deployment script
-          sudo ./deploy-container.sh \
-            "$FULL_IMAGE" \
-            "${{ needs.build-and-push.outputs.image_tag }}" \
-            "development" \
-            "${{ env.APP_PORT }}"
+          # Deploy container
+          sudo docker pull ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ needs.build-and-push.outputs.image_tag }}
+          sudo docker stop ${{ env.CONTAINER_NAME }} || true
+          sudo docker rm ${{ env.CONTAINER_NAME }} || true
+          sudo docker run -d \
+            --name ${{ env.CONTAINER_NAME }} \
+            -p ${{ env.APP_PORT }}:80 \
+            -e NODE_ENV=development \
+            --restart unless-stopped \
+            ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ needs.build-and-push.outputs.image_tag }}
           
           echo "=== Dev Deployment Complete ==="
 
@@ -114,44 +100,43 @@ jobs:
     environment: production
     
     steps:
-    - name: Download deployment script
-      uses: actions/download-artifact@v4
-      with:
-        name: deploy-script
-
-    - name: Make script executable
-      run: chmod +x deploy-container.sh
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Verify Dev deployment
+    - name: Verify Prod Server IP
       run: |
-        echo "Verifying Dev deployment before proceeding to Prod..."
-        # Add health check command here if needed
+        if [ -z "${{ secrets.PROD_SERVER_IP }}" ]; then
+          echo "::error::PROD_SERVER_IP secret is missing"
+          exit 1
+        fi
 
     - name: Deploy to Prod EC2
       uses: appleboy/ssh-action@master
       with:
-        host: ${{ secrets.PROD_EC2_HOST }}
+        host: ${{ secrets.PROD_SERVER_IP }}
         username: ec2-user
-        key: ${{ secrets.PROD_EC2_SSH_KEY }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 22
         script: |
-          echo "=== Starting Prod Deployment ==="
+          echo "=== Starting Prod Deployment to ${{ secrets.PROD_SERVER_IP }} ==="
           
-          # Get ECR registry URL from build job
-          REGISTRY=$(echo "${{ steps.login-ecr.outputs.registry }}" | cut -d'/' -f1)
-          FULL_IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}"
+          # Login to ECR
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+            sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
           
-          # Execute deployment script
-          sudo ./deploy-container.sh \
-            "$FULL_IMAGE" \
-            "${{ needs.build-and-push.outputs.image_tag }}" \
-            "production" \
-            "${{ env.APP_PORT }}"
+          # Deploy container
+          sudo docker pull ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ needs.build-and-push.outputs.image_tag }}
+          sudo docker stop ${{ env.CONTAINER_NAME }} || true
+          sudo docker rm ${{ env.CONTAINER_NAME }} || true
+          sudo docker run -d \
+            --name ${{ env.CONTAINER_NAME }} \
+            -p ${{ env.APP_PORT }}:80 \
+            -e NODE_ENV=production \
+            --restart unless-stopped \
+            ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ needs.build-and-push.outputs.image_tag }}
           
           echo "=== Prod Deployment Complete ==="
