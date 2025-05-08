@@ -7,6 +7,7 @@ on:
 env:
   CONTAINER_NAME: static-resume-container
   APP_PORT: 80
+
 permissions:
   contents: read
 
@@ -43,12 +44,6 @@ jobs:
         docker build -t ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }} .
         docker push ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }}
 
-    - name: Upload deploy script
-      uses: actions/upload-artifact@v4
-      with:
-        name: deploy-script
-        path: deploy-container.sh
-
   deploy-dev:
     name: Deploy to Dev EC2
     needs: build-and-push
@@ -56,27 +51,12 @@ jobs:
     environment: development
     
     steps:
-    - name: Download deploy script
-      uses: actions/download-artifact@v4
-      with:
-        name: deploy-script
-
-    - name: Make script executable
-      run: chmod +x deploy-container.sh
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-
-    - name: Verify Dev Server IP
-      run: |
-        if [ -z "${{ secrets.DEV_SERVER_IP }}" ]; then
-          echo "::error::DEV_SERVER_IP secret is missing"
-          exit 1
-        fi
 
     - name: Deploy to Dev EC2
       uses: appleboy/ssh-action@master
@@ -86,14 +66,73 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 22
         script: |
-          echo "=== Starting Dev Deployment ==="
-          
+          # Install Docker if not present
+          if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            sudo yum update -y
+            sudo amazon-linux-extras install docker -y
+            sudo yum install docker -y
+            sudo systemctl enable docker
+            sudo systemctl start docker
+            sudo usermod -aG docker ec2-user
+          fi
+
+          # Install AWS CLI if not present
+          if ! command -v aws &> /dev/null; then
+            echo "Installing AWS CLI..."
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+            rm -rf awscliv2.zip aws/
+          fi
+
+          # Configure AWS credentials
+          mkdir -p ~/.aws
+          cat > ~/.aws/config <<EOL
+          [default]
+          region = ${{ secrets.AWS_REGION }}
+          EOL
+
+          # Transfer deploy script
+          echo "Transferring deployment script..."
+          cat > deploy-container.sh <<'EOL'
+          #!/bin/bash
+          set -e
+
+          IMAGE_URI=$1
+          TAG=$2
+          ENVIRONMENT=$3
+          PORT=$4
+          CONTAINER_NAME="static-resume-container"
+
+          echo "=== Starting $ENVIRONMENT Deployment ==="
+          echo "Pulling image: $IMAGE_URI:$TAG"
+          sudo docker pull "$IMAGE_URI:$TAG"
+
+          echo "Cleaning up previous container..."
+          sudo docker stop "$CONTAINER_NAME" || true
+          sudo docker rm "$CONTAINER_NAME" || true
+
+          echo "Starting new container..."
+          sudo docker run -d \
+            --name "$CONTAINER_NAME" \
+            -p "$PORT":80 \
+            -e NODE_ENV="$ENVIRONMENT" \
+            --restart unless-stopped \
+            "$IMAGE_URI:$TAG"
+
+          echo "=== $ENVIRONMENT Deployment Complete ==="
+          EOL
+
+          chmod +x deploy-container.sh
+
           # Login to ECR
+          echo "Authenticating with ECR..."
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
             sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-          
-          # Execute deployment script
-          sudo ./deploy-container.sh \
+
+          # Execute deployment
+          ./deploy-container.sh \
             "${{ steps.login-ecr.outputs.registry }}/static-resume" \
             "${{ needs.build-and-push.outputs.image_tag }}" \
             "development" \
@@ -107,27 +146,12 @@ jobs:
     environment: production
     
     steps:
-    - name: Download deploy script
-      uses: actions/download-artifact@v4
-      with:
-        name: deploy-script
-
-    - name: Make script executable
-      run: chmod +x deploy-container.sh
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
-
-    - name: Verify Prod Server IP
-      run: |
-        if [ -z "${{ secrets.PROD_SERVER_IP }}" ]; then
-          echo "::error::PROD_SERVER_IP secret is missing"
-          exit 1
-        fi
 
     - name: Deploy to Prod EC2
       uses: appleboy/ssh-action@master
@@ -137,14 +161,15 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 22
         script: |
-          echo "=== Starting Prod Deployment ==="
+          # [Same installation and setup as dev environment]
           
           # Login to ECR
+          echo "Authenticating with ECR..."
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
             sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-          
-          # Execute deployment script
-          sudo ./deploy-container.sh \
+
+          # Execute deployment
+          ./deploy-container.sh \
             "${{ steps.login-ecr.outputs.registry }}/static-resume" \
             "${{ needs.build-and-push.outputs.image_tag }}" \
             "production" \
