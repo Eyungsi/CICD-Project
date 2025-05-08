@@ -2,11 +2,15 @@ name: Deploy to EC2 (Dev & Prod)
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: static-resume
   CONTAINER_NAME: static-resume-container
-  APP_PORT: 80
+  HOST_PORT: 80
+  CONTAINER_PORT: 8080
 
 permissions:
   contents: read
@@ -16,85 +20,80 @@ jobs:
     name: Build and Push to ECR
     runs-on: ubuntu-latest
     outputs:
+      registry: ${{ steps.login-ecr.outputs.registry }}
       image_tag: ${{ steps.set-tag.outputs.tag }}
-      image_uri: ${{ steps.build-image.outputs.image_uri }}
-    
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set image tag
-      id: set-tag
-      run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Set image tag
+        id: set-tag
+        run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-      with:
-        mask-password: 'true'
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: true
 
-    - name: Build and push image
-      id: build-image
-      run: |
-        docker build -t ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }} .
-        docker push ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }}
-        echo "image_uri=${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }}" >> $GITHUB_OUTPUT
+      - name: Build and push image
+        run: |
+          REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          TAG=${{ steps.set-tag.outputs.tag }}
+          IMAGE_URI=$REGISTRY/${{ env.ECR_REPOSITORY }}:$TAG
+
+          echo ">> Building & pushing $IMAGE_URI"
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
 
   deploy-dev:
     name: Deploy to Dev EC2
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: development
-    
-    steps:
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Deploy to Dev EC2
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.DEV_SERVER_IP }}
-        username: ec2-user
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 22
-        script_timeout: 120
-        script: |
-          # Install prerequisites
-          if ! command -v docker &> /dev/null; then
-            sudo yum update -y
-            sudo yum install -y docker
-            sudo systemctl enable docker
-            sudo systemctl start docker
-            sudo usermod -aG docker ec2-user
-          fi
-          
-          if ! command -v aws &> /dev/null; then
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install
-            rm -rf awscliv2.zip aws/
-          fi
-          
-          # Login to ECR
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
-            sudo docker login --username AWS --password-stdin ${{ needs.build-and-push.outputs.image_uri | split(':')[0] }}
-          
-          # Execute deployment script
-          sudo ./deploy-container.sh \
-            "${{ needs.build-and-push.outputs.image_uri }}" \
-            "development" \
-            "${{ env.APP_PORT }}"
+    steps:
+      - name: Deploy to Dev EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.DEV_SERVER_IP }}
+          username: ec2-user
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          port:     22
+          script: |
+            REGISTRY=${{ needs.build-and-push.outputs.registry }}
+            TAG=${{ needs.build-and-push.outputs.image_tag }}
+            IMAGE_URI=$REGISTRY/${{ env.ECR_REPOSITORY }}:$TAG
+
+            echo ">> REGISTRY       = $REGISTRY"
+            echo ">> IMAGE_TAG      = $TAG"
+            echo ">> IMAGE_URI      = $IMAGE_URI"
+            echo ">> HOST_PORT      = ${{ env.HOST_PORT }}"
+            echo ">> CONTAINER_PORT = ${{ env.CONTAINER_PORT }}"
+
+            # Login to ECR
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+              sudo docker login --username AWS --password-stdin $REGISTRY
+
+            # Replace any existing container
+            sudo docker stop ${{ env.CONTAINER_NAME }} || true
+            sudo docker rm   ${{ env.CONTAINER_NAME }} || true
+
+            # Pull & run with correct port mapping
+            sudo docker pull $IMAGE_URI
+            sudo docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              -p ${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }} \
+              --restart unless-stopped \
+              $IMAGE_URI
 
   deploy-prod:
     name: Deploy to Prod EC2
@@ -102,46 +101,35 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
-    
-    steps:
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Deploy to Prod EC2
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.PROD_SERVER_IP }}
-        username: ec2-user
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 22
-        script_timeout: 120
-        script: |
-          # Same prerequisites as dev
-          if ! command -v docker &> /dev/null; then
-            sudo yum update -y
-            sudo yum install -y docker
-            sudo systemctl enable docker
-            sudo systemctl start docker
-            sudo usermod -aG docker ec2-user
-          fi
-          
-          if ! command -v aws &> /dev/null; then
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install
-            rm -rf awscliv2.zip aws/
-          fi
-          
-          # Login to ECR
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
-            sudo docker login --username AWS --password-stdin ${{ needs.build-and-push.outputs.image_uri | split(':')[0] }}
-          
-          # Execute deployment script
-          sudo ./deploy-container.sh \
-            "${{ needs.build-and-push.outputs.image_uri }}" \
-            "production" \
-            "${{ env.APP_PORT }}"
+    steps:
+      - name: Deploy to Prod EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.PROD_SERVER_IP }}
+          username: ec2-user
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          port:     22
+          script: |
+            REGISTRY=${{ needs.build-and-push.outputs.registry }}
+            TAG=${{ needs.build-and-push.outputs.image_tag }}
+            IMAGE_URI=$REGISTRY/${{ env.ECR_REPOSITORY }}:$TAG
+
+            echo ">> REGISTRY       = $REGISTRY"
+            echo ">> IMAGE_TAG      = $TAG"
+            echo ">> IMAGE_URI      = $IMAGE_URI"
+            echo ">> HOST_PORT      = ${{ env.HOST_PORT }}"
+            echo ">> CONTAINER_PORT = ${{ env.CONTAINER_PORT }}"
+
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+              sudo docker login --username AWS --password-stdin $REGISTRY
+
+            sudo docker stop ${{ env.CONTAINER_NAME }} || true
+            sudo docker rm   ${{ env.CONTAINER_NAME }} || true
+
+            sudo docker pull $IMAGE_URI
+            sudo docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              -p ${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }} \
+              --restart unless-stopped \
+              $IMAGE_URI
