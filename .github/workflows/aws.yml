@@ -71,10 +71,12 @@ jobs:
         run: |
           TAG=${{ needs.build-and-push.outputs.image_tag }}
           IMAGE=${{ needs.build-and-push.outputs.image_uri }}
+          ENV="development"
+          PORT=80
 
           scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.DEV_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE $TAG development 80"
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh '$IMAGE' '$TAG' '$ENV' '$PORT'"
 
   deploy-prod:
     name: Deploy to Prod EC2
@@ -96,7 +98,9 @@ jobs:
         run: |
           TAG=${{ needs.build-and-push.outputs.image_tag }}
           IMAGE=${{ needs.build-and-push.outputs.image_uri }}
+          ENV="production"
+          PORT=80
 
           scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
           ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE $TAG production 80"
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh '$IMAGE' '$TAG' '$ENV' '$PORT'"
