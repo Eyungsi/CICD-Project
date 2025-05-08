@@ -1,51 +1,31 @@
 #!/bin/bash
-
 set -e
 
-IMAGE_NAME=$1
+# Parameters
+IMAGE_URI=$1
 TAG=$2
-ENV=$3
+ENVIRONMENT=$3
 PORT=$4
+CONTAINER_NAME="static-resume-container"
 
-if [[ -z "$IMAGE_NAME" || -z "$TAG" || -z "$ENV" || -z "$PORT" ]]; then
-  echo "Usage: $0 <IMAGE_NAME> <TAG> <ENV> <PORT>"
-  exit 1
-fi
+echo "=== Starting $ENVIRONMENT Deployment ==="
 
-echo "Checking for Docker..."
-if ! command -v docker &> /dev/null; then
-  echo "Docker not found. Installing..."
+# Pull the Docker image
+echo "Pulling image: $IMAGE_URI:$TAG"
+sudo docker pull "$IMAGE_URI:$TAG"
 
-  if command -v dnf &> /dev/null; then
-    sudo dnf update -y
-    sudo dnf install -y docker
-  else
-    sudo yum update -y
-    sudo yum install -y docker
-  fi
+# Stop and remove old container if exists
+echo "Cleaning up previous container..."
+sudo docker stop "$CONTAINER_NAME" || true
+sudo docker rm "$CONTAINER_NAME" || true
 
-  sudo systemctl enable docker
-  sudo systemctl start docker
-  sudo usermod -aG docker "$USER"
-
-  echo "Docker installed successfully."
-fi
-
-# Authenticate with AWS ECR
-echo "Authenticating with ECR..."
-aws ecr get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin "${IMAGE_NAME%%/*}"
-
-echo "Pulling image: $IMAGE_NAME:$TAG"
-docker pull "$IMAGE_NAME:$TAG"
-
-echo "Stopping and removing old container (if exists)..."
-docker stop static-resume || true
-docker rm static-resume || true
-
+# Run new container
 echo "Starting new container..."
-docker run -d --name static-resume -p "$PORT":8080 \
-  -e ENV="$ENV" \
-  "$IMAGE_NAME:$TAG"
+sudo docker run -d \
+  --name "$CONTAINER_NAME" \
+  -p "$PORT":80 \
+  -e NODE_ENV="$ENVIRONMENT" \
+  --restart unless-stopped \
+  "$IMAGE_URI:$TAG"
 
-echo " Deployment to $ENV completed!"
+echo "=== $ENVIRONMENT Deployment Complete ==="
