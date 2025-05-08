@@ -61,7 +61,7 @@ jobs:
     environment: development
 
     steps:
-      - name: Deploy to Dev EC2
+      - name: Copy & run deploy script on Dev EC2
         uses: appleboy/ssh-action@master
         with:
           host:     ${{ secrets.DEV_SERVER_IP }}
@@ -69,6 +69,7 @@ jobs:
           key:      ${{ secrets.SSH_PRIVATE_KEY }}
           port:     22
           script: |
+            # These will now be non-empty:
             REGISTRY=${{ needs.build-and-push.outputs.registry }}
             TAG=${{ needs.build-and-push.outputs.image_tag }}
             IMAGE_URI=$REGISTRY/${{ env.ECR_REPOSITORY }}:$TAG
@@ -79,15 +80,10 @@ jobs:
             echo ">> HOST_PORT      = ${{ env.HOST_PORT }}"
             echo ">> CONTAINER_PORT = ${{ env.CONTAINER_PORT }}"
 
-            # Login to ECR
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-              sudo docker login --username AWS --password-stdin $REGISTRY
+            # ECR auth now via instance IAM role – no aws creds needed here!
 
-            # Replace any existing container
             sudo docker stop ${{ env.CONTAINER_NAME }} || true
             sudo docker rm   ${{ env.CONTAINER_NAME }} || true
-
-            # Pull & run with correct port mapping
             sudo docker pull $IMAGE_URI
             sudo docker run -d \
               --name ${{ env.CONTAINER_NAME }} \
@@ -103,7 +99,7 @@ jobs:
     environment: production
 
     steps:
-      - name: Deploy to Prod EC2
+      - name: Copy & run deploy script on Prod EC2
         uses: appleboy/ssh-action@master
         with:
           host:     ${{ secrets.PROD_SERVER_IP }}
@@ -121,12 +117,8 @@ jobs:
             echo ">> HOST_PORT      = ${{ env.HOST_PORT }}"
             echo ">> CONTAINER_PORT = ${{ env.CONTAINER_PORT }}"
 
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-              sudo docker login --username AWS --password-stdin $REGISTRY
-
             sudo docker stop ${{ env.CONTAINER_NAME }} || true
             sudo docker rm   ${{ env.CONTAINER_NAME }} || true
-
             sudo docker pull $IMAGE_URI
             sudo docker run -d \
               --name ${{ env.CONTAINER_NAME }} \
