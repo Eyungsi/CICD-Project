@@ -3,16 +3,15 @@ set -e
 
 # Parameters
 IMAGE_URI=$1
-TAG=$2
-ENVIRONMENT=$3
-PORT=$4
+ENVIRONMENT=$2
+PORT=$3
 CONTAINER_NAME="static-resume-container"
 
 echo "=== Starting $ENVIRONMENT Deployment ==="
 
 # Pull the Docker image
-echo "Pulling image: $IMAGE_URI:$TAG"
-sudo docker pull "$IMAGE_URI:$TAG"
+echo "Pulling image: $IMAGE_URI"
+sudo docker pull "$IMAGE_URI"
 
 # Stop and remove old container if exists
 echo "Cleaning up previous container..."
@@ -26,6 +25,6 @@ sudo docker run -d \
   -p "$PORT":80 \
   -e NODE_ENV="$ENVIRONMENT" \
   --restart unless-stopped \
-  "$IMAGE_URI:$TAG"
+  "$IMAGE_URI"
 
 echo "=== $ENVIRONMENT Deployment Complete ==="

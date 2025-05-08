@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
+      image_uri: ${{ steps.build-image.outputs.image_uri }}
     
     steps:
     - name: Checkout
@@ -40,9 +41,11 @@ jobs:
         mask-password: 'true'
 
     - name: Build and push image
+      id: build-image
       run: |
         docker build -t ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }} .
         docker push ${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }}
+        echo "image_uri=${{ steps.login-ecr.outputs.registry }}/static-resume:${{ steps.set-tag.outputs.tag }}" >> $GITHUB_OUTPUT
 
   deploy-dev:
     name: Deploy to Dev EC2
@@ -65,76 +68,31 @@ jobs:
         username: ec2-user
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 22
+        script_timeout: 120
         script: |
-          # Install Docker if not present
+          # Install prerequisites
           if ! command -v docker &> /dev/null; then
-            echo "Installing Docker..."
             sudo yum update -y
-            sudo amazon-linux-extras install docker -y
-            sudo yum install docker -y
+            sudo yum install -y docker
             sudo systemctl enable docker
             sudo systemctl start docker
             sudo usermod -aG docker ec2-user
           fi
-
-          # Install AWS CLI if not present
+          
           if ! command -v aws &> /dev/null; then
-            echo "Installing AWS CLI..."
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
             unzip awscliv2.zip
             sudo ./aws/install
             rm -rf awscliv2.zip aws/
           fi
-
-          # Configure AWS credentials
-          mkdir -p ~/.aws
-          cat > ~/.aws/config <<EOL
-          [default]
-          region = ${{ secrets.AWS_REGION }}
-          EOL
-
-          # Transfer deploy script
-          echo "Transferring deployment script..."
-          cat > deploy-container.sh <<'EOL'
-          #!/bin/bash
-          set -e
-
-          IMAGE_URI=$1
-          TAG=$2
-          ENVIRONMENT=$3
-          PORT=$4
-          CONTAINER_NAME="static-resume-container"
-
-          echo "=== Starting $ENVIRONMENT Deployment ==="
-          echo "Pulling image: $IMAGE_URI:$TAG"
-          sudo docker pull "$IMAGE_URI:$TAG"
-
-          echo "Cleaning up previous container..."
-          sudo docker stop "$CONTAINER_NAME" || true
-          sudo docker rm "$CONTAINER_NAME" || true
-
-          echo "Starting new container..."
-          sudo docker run -d \
-            --name "$CONTAINER_NAME" \
-            -p "$PORT":80 \
-            -e NODE_ENV="$ENVIRONMENT" \
-            --restart unless-stopped \
-            "$IMAGE_URI:$TAG"
-
-          echo "=== $ENVIRONMENT Deployment Complete ==="
-          EOL
-
-          chmod +x deploy-container.sh
-
+          
           # Login to ECR
-          echo "Authenticating with ECR..."
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
-            sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-
-          # Execute deployment
-          ./deploy-container.sh \
-            "${{ steps.login-ecr.outputs.registry }}/static-resume" \
-            "${{ needs.build-and-push.outputs.image_tag }}" \
+            sudo docker login --username AWS --password-stdin ${{ needs.build-and-push.outputs.image_uri | split(':')[0] }}
+          
+          # Execute deployment script
+          sudo ./deploy-container.sh \
+            "${{ needs.build-and-push.outputs.image_uri }}" \
             "development" \
             "${{ env.APP_PORT }}"
 
@@ -160,17 +118,30 @@ jobs:
         username: ec2-user
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: 22
+        script_timeout: 120
         script: |
-          # [Same installation and setup as dev environment]
+          # Same prerequisites as dev
+          if ! command -v docker &> /dev/null; then
+            sudo yum update -y
+            sudo yum install -y docker
+            sudo systemctl enable docker
+            sudo systemctl start docker
+            sudo usermod -aG docker ec2-user
+          fi
+          
+          if ! command -v aws &> /dev/null; then
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+            rm -rf awscliv2.zip aws/
+          fi
           
           # Login to ECR
-          echo "Authenticating with ECR..."
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
-            sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-
-          # Execute deployment
-          ./deploy-container.sh \
-            "${{ steps.login-ecr.outputs.registry }}/static-resume" \
-            "${{ needs.build-and-push.outputs.image_tag }}" \
+            sudo docker login --username AWS --password-stdin ${{ needs.build-and-push.outputs.image_uri | split(':')[0] }}
+          
+          # Execute deployment script
+          sudo ./deploy-container.sh \
+            "${{ needs.build-and-push.outputs.image_uri }}" \
             "production" \
             "${{ env.APP_PORT }}"
