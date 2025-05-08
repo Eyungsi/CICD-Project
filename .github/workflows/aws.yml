@@ -19,10 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
+      image_uri: ${{ steps.build-image.outputs.image_uri }}
     
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        path: src
 
     - name: Set image tag
       id: set-tag
@@ -39,12 +42,22 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
       with:
-        mask-password: 'true'  # This fixes the password masking warning
+        mask-password: 'true'
 
     - name: Build and push image
+      id: build-image
       run: |
+        cd src
         docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }} .
         docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }}
+        echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }}" >> $GITHUB_OUTPUT
+
+    - name: Upload deployment script
+      uses: actions/upload-artifact@v3
+      with:
+        name: deploy-script
+        path: src/deploy-container.sh
+        if-no-files-found: error
 
   deploy-dev:
     name: Deploy to Dev EC2
@@ -53,6 +66,14 @@ jobs:
     environment: development
     
     steps:
+    - name: Download deployment script
+      uses: actions/download-artifact@v3
+      with:
+        name: deploy-script
+
+    - name: Make script executable
+      run: chmod +x deploy-container.sh
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -67,22 +88,21 @@ jobs:
         username: ec2-user
         key: ${{ secrets.DEV_EC2_SSH_KEY }}
         script: |
-          # Secure ECR login that won't expose credentials
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+          # Download the deployment script
+          echo "Downloading deployment script..."
+          aws s3 cp s3://your-deployment-bucket/deploy-container.sh ./deploy-container.sh || \
+          curl -L https://raw.githubusercontent.com/your-repo/main/deploy-container.sh -o deploy-container.sh
+          chmod +x deploy-container.sh
           
-          # Clean up old container
-          sudo docker stop ${{ env.CONTAINER_NAME }} || true
-          sudo docker rm ${{ env.CONTAINER_NAME }} || true
+          # Execute deployment
+          echo "Starting deployment to Dev..."
+          ./deploy-container.sh \
+            "${{ needs.build-and-push.outputs.image_uri }}" \
+            "${{ needs.build-and-push.outputs.image_tag }}" \
+            "development" \
+            "${{ env.APP_PORT }}"
           
-          # Pull and run new container
-          sudo docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}
-          sudo docker run -d \
-            --name ${{ env.CONTAINER_NAME }} \
-            -p ${{ env.APP_PORT }}:80 \
-            -e NODE_ENV=development \
-            --restart unless-stopped \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}
+          echo "Dev deployment complete!"
 
   deploy-prod:
     name: Deploy to Prod EC2
@@ -92,12 +112,26 @@ jobs:
     environment: production
     
     steps:
+    - name: Download deployment script
+      uses: actions/download-artifact@v3
+      with:
+        name: deploy-script
+
+    - name: Make script executable
+      run: chmod +x deploy-container.sh
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
+
+    - name: Verify Dev deployment
+      run: |
+        echo "Verifying Dev deployment before proceeding to Prod..."
+        # Add your health check command here
+        # Example: curl -sSf http://${{ secrets.DEV_EC2_HOST }}:${{ env.APP_PORT }}
 
     - name: Deploy to Prod EC2
       uses: appleboy/ssh-action@master
@@ -106,16 +140,18 @@ jobs:
         username: ec2-user
         key: ${{ secrets.PROD_EC2_SSH_KEY }}
         script: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            sudo docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+          # Download the deployment script
+          echo "Downloading deployment script..."
+          aws s3 cp s3://your-deployment-bucket/deploy-container.sh ./deploy-container.sh || \
+          curl -L https://raw.githubusercontent.com/your-repo/main/deploy-container.sh -o deploy-container.sh
+          chmod +x deploy-container.sh
           
-          sudo docker stop ${{ env.CONTAINER_NAME }} || true
-          sudo docker rm ${{ env.CONTAINER_NAME }} || true
+          # Execute deployment
+          echo "Starting deployment to Prod..."
+          ./deploy-container.sh \
+            "${{ needs.build-and-push.outputs.image_uri }}" \
+            "${{ needs.build-and-push.outputs.image_tag }}" \
+            "production" \
+            "${{ env.APP_PORT }}"
           
-          sudo docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}
-          sudo docker run -d \
-            --name ${{ env.CONTAINER_NAME }} \
-            -p ${{ env.APP_PORT }}:80 \
-            -e NODE_ENV=production \
-            --restart unless-stopped \
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}
+          echo "Prod deployment complete!"
