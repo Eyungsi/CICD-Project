@@ -2,7 +2,7 @@ name: Deploy to EC2 (Dev & Prod)
 
 on:
   push:
-   branches: ["main"]
+    branches: ["main"]
 
 env:
   AWS_REGION: us-east-1
@@ -59,22 +59,22 @@ jobs:
     environment: development
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ env.SSH_KEY }}
 
-      - name: Deploy to Dev EC2 instance
+      - name: Copy and run deploy script on Dev EC2
         run: |
           TAG=${{ needs.build-and-push.outputs.image_tag }}
           IMAGE=${{ needs.build-and-push.outputs.image_uri }}
 
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} <<EOF
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-            docker stop static-resume || true && docker rm static-resume || true
-            docker pull $IMAGE
-            docker run -d --name static-resume -p 80:80 $IMAGE
-          EOF
+          scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.DEV_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} \
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE $TAG development 80"
 
   deploy-prod:
     name: Deploy to Prod EC2
@@ -84,19 +84,19 @@ jobs:
     environment: production
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Set up SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ env.SSH_KEY }}
 
-      - name: Deploy to Prod EC2 instance
+      - name: Copy and run deploy script on Prod EC2
         run: |
           TAG=${{ needs.build-and-push.outputs.image_tag }}
           IMAGE=${{ needs.build-and-push.outputs.image_uri }}
 
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} <<EOF
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-            docker stop static-resume || true && docker rm static-resume || true
-            docker pull $IMAGE
-            docker run -d --name static-resume -p 80:80 $IMAGE
-          EOF
+          scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
+            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE $TAG production 80"

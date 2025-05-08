@@ -14,23 +14,36 @@ fi
 
 echo "Checking for Docker..."
 if ! command -v docker &> /dev/null; then
-  echo " Installing Docker..."
-  sudo yum update -y
-  sudo yum install -y docker
+  echo "Docker not found. Installing..."
+
+  if command -v dnf &> /dev/null; then
+    sudo dnf update -y
+    sudo dnf install -y docker
+  else
+    sudo yum update -y
+    sudo yum install -y docker
+  fi
+
   sudo systemctl enable docker
   sudo systemctl start docker
-  sudo usermod -aG docker ec2-user
-  newgrp docker
+  sudo usermod -aG docker "$USER"
+
+  echo "Docker installed successfully."
 fi
 
-echo " Pulling image: $IMAGE_NAME:$TAG"
+# Authenticate with AWS ECR
+echo "Authenticating with ECR..."
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin "${IMAGE_NAME%%/*}"
+
+echo "Pulling image: $IMAGE_NAME:$TAG"
 docker pull "$IMAGE_NAME:$TAG"
 
-echo " Stopping and removing old container..."
+echo "Stopping and removing old container (if exists)..."
 docker stop static-resume || true
 docker rm static-resume || true
 
-echo " Running container..."
+echo "Starting new container..."
 docker run -d --name static-resume -p "$PORT":8080 \
   -e ENV="$ENV" \
   "$IMAGE_NAME:$TAG"
