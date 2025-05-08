@@ -24,12 +24,17 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-      with:
-        path: src
 
     - name: Set image tag
       id: set-tag
-      run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      run: |
+        TAG=$(git rev-parse --short HEAD)
+        if [ -z "$TAG" ]; then
+          echo "Error: Failed to generate tag"
+          exit 1
+        fi
+        echo "Using tag: $TAG"
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -47,16 +52,26 @@ jobs:
     - name: Build and push image
       id: build-image
       run: |
-        cd src
+        # Verify tag is set
+        if [ -z "${{ steps.set-tag.outputs.tag }}" ]; then
+          echo "Error: Image tag is empty"
+          exit 1
+        fi
+        
+        echo "Building image with tag: ${{ steps.set-tag.outputs.tag }}"
         docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }} .
+        
+        echo "Pushing image to ECR..."
         docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }}
+        
+        # Output the full image URI
         echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }}" >> $GITHUB_OUTPUT
 
     - name: Upload deployment script
       uses: actions/upload-artifact@v4
       with:
         name: deploy-script
-        path: src/deploy-container.sh
+        path: deploy-container.sh
         if-no-files-found: error
 
   deploy-dev:
@@ -70,7 +85,6 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: deploy-script
-        path: .
 
     - name: Make script executable
       run: chmod +x deploy-container.sh
@@ -90,9 +104,17 @@ jobs:
         key: ${{ secrets.DEV_EC2_SSH_KEY }}
         script: |
           echo "Starting Dev deployment..."
+          IMAGE_URI="${{ needs.build-and-push.outputs.image_uri }}"
+          TAG="${{ needs.build-and-push.outputs.image_tag }}"
+          
+          if [ -z "$IMAGE_URI" ] || [ -z "$TAG" ]; then
+            echo "Error: Missing image URI or tag"
+            exit 1
+          fi
+          
           sudo ./deploy-container.sh \
-            "${{ needs.build-and-push.outputs.image_uri }}" \
-            "${{ needs.build-and-push.outputs.image_tag }}" \
+            "$IMAGE_URI" \
+            "$TAG" \
             "development" \
             "${{ env.APP_PORT }}"
           echo "Dev deployment completed successfully!"
@@ -109,7 +131,6 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: deploy-script
-        path: .
 
     - name: Make script executable
       run: chmod +x deploy-container.sh
@@ -124,7 +145,7 @@ jobs:
     - name: Verify Dev deployment
       run: |
         echo "Verifying Dev deployment health..."
-        # Add your actual health check command here
+        # Add your health check command here
 
     - name: Deploy to Prod EC2
       uses: appleboy/ssh-action@master
@@ -134,9 +155,17 @@ jobs:
         key: ${{ secrets.PROD_EC2_SSH_KEY }}
         script: |
           echo "Starting Prod deployment..."
+          IMAGE_URI="${{ needs.build-and-push.outputs.image_uri }}"
+          TAG="${{ needs.build-and-push.outputs.image_tag }}"
+          
+          if [ -z "$IMAGE_URI" ] || [ -z "$TAG" ]; then
+            echo "Error: Missing image URI or tag"
+            exit 1
+          fi
+          
           sudo ./deploy-container.sh \
-            "${{ needs.build-and-push.outputs.image_uri }}" \
-            "${{ needs.build-and-push.outputs.image_tag }}" \
+            "$IMAGE_URI" \
+            "$TAG" \
             "production" \
             "${{ env.APP_PORT }}"
           echo "Prod deployment completed successfully!"
