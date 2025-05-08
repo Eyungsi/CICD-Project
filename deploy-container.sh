@@ -18,7 +18,7 @@ echo "Cleaning up previous container..."
 sudo docker stop "$CONTAINER_NAME" || true
 sudo docker rm "$CONTAINER_NAME" || true
 
-# Run new container
+# Run new container (mapped to specified port)
 echo "Starting new container..."
 sudo docker run -d \
   --name "$CONTAINER_NAME" \

@@ -1,13 +1,13 @@
-# Use a lightweight Nginx image
-FROM nginx:alpine
+# Use the official Apache httpd image
+FROM httpd:alpine
 
-# Remove default Nginx HTML files
-RUN rm -rf /usr/share/nginx/html/*
+# Remove default Apache files
+RUN rm -rf /usr/local/apache2/htdocs/*
 
-# Copy your static files into the Nginx public directory
-COPY . /usr/share/nginx/html
+# Copy your static files into Apache's document root
+COPY . /usr/local/apache2/htdocs
 
-# Optional: Expose port 80 (already handled by nginx, but good for clarity)
-EXPOSE 8080
+# Expose port 80 (Apache's default port)
+EXPOSE 80
 
-# Nginx runs automatically with the base image as the entrypoint
+# Apache runs automatically with the base image as the entrypoint
