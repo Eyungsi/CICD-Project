@@ -53,7 +53,7 @@ jobs:
         echo "image_uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.set-tag.outputs.tag }}" >> $GITHUB_OUTPUT
 
     - name: Upload deployment script
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: deploy-script
         path: src/deploy-container.sh
@@ -67,9 +67,10 @@ jobs:
     
     steps:
     - name: Download deployment script
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: deploy-script
+        path: .
 
     - name: Make script executable
       run: chmod +x deploy-container.sh
@@ -88,21 +89,13 @@ jobs:
         username: ec2-user
         key: ${{ secrets.DEV_EC2_SSH_KEY }}
         script: |
-          # Download the deployment script
-          echo "Downloading deployment script..."
-          aws s3 cp s3://your-deployment-bucket/deploy-container.sh ./deploy-container.sh || \
-          curl -L https://raw.githubusercontent.com/your-repo/main/deploy-container.sh -o deploy-container.sh
-          chmod +x deploy-container.sh
-          
-          # Execute deployment
-          echo "Starting deployment to Dev..."
-          ./deploy-container.sh \
+          echo "Starting Dev deployment..."
+          sudo ./deploy-container.sh \
             "${{ needs.build-and-push.outputs.image_uri }}" \
             "${{ needs.build-and-push.outputs.image_tag }}" \
             "development" \
             "${{ env.APP_PORT }}"
-          
-          echo "Dev deployment complete!"
+          echo "Dev deployment completed successfully!"
 
   deploy-prod:
     name: Deploy to Prod EC2
@@ -113,9 +106,10 @@ jobs:
     
     steps:
     - name: Download deployment script
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: deploy-script
+        path: .
 
     - name: Make script executable
       run: chmod +x deploy-container.sh
@@ -129,9 +123,8 @@ jobs:
 
     - name: Verify Dev deployment
       run: |
-        echo "Verifying Dev deployment before proceeding to Prod..."
-        # Add your health check command here
-        # Example: curl -sSf http://${{ secrets.DEV_EC2_HOST }}:${{ env.APP_PORT }}
+        echo "Verifying Dev deployment health..."
+        # Add your actual health check command here
 
     - name: Deploy to Prod EC2
       uses: appleboy/ssh-action@master
@@ -140,18 +133,10 @@ jobs:
         username: ec2-user
         key: ${{ secrets.PROD_EC2_SSH_KEY }}
         script: |
-          # Download the deployment script
-          echo "Downloading deployment script..."
-          aws s3 cp s3://your-deployment-bucket/deploy-container.sh ./deploy-container.sh || \
-          curl -L https://raw.githubusercontent.com/your-repo/main/deploy-container.sh -o deploy-container.sh
-          chmod +x deploy-container.sh
-          
-          # Execute deployment
-          echo "Starting deployment to Prod..."
-          ./deploy-container.sh \
+          echo "Starting Prod deployment..."
+          sudo ./deploy-container.sh \
             "${{ needs.build-and-push.outputs.image_uri }}" \
             "${{ needs.build-and-push.outputs.image_tag }}" \
             "production" \
             "${{ env.APP_PORT }}"
-          
-          echo "Prod deployment complete!"
+          echo "Prod deployment completed successfully!"
