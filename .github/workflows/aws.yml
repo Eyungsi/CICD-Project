@@ -1,92 +1,102 @@
-name: Deploy Static Resume to AWS EC2 via Docker
+name: Deploy to EC2 (Dev & Prod)
 
 on:
   push:
-    branches: ["main"]
-  workflow_dispatch:
+  branches: ["main"]
 
 env:
-  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/static-resume
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: static-resume
   DEV_SERVER: ${{ secrets.DEV_SERVER_IP }}
   PROD_SERVER: ${{ secrets.PROD_SERVER_IP }}
+  SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+permissions:
+  contents: read
 
 jobs:
   build-and-push:
-    name: Build and Push Docker Image
+    name: Build and Push to ECR
     runs-on: ubuntu-latest
     outputs:
-      image_tag: ${{ steps.set_tag.outputs.tag }}
+      image_uri: ${{ steps.build-image.outputs.image }}
+      image_tag: ${{ steps.set-tag.outputs.tag }}
+
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set image tag using short SHA
-        id: set_tag
+      - name: Set Docker image tag
+        id: set-tag
         run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Log in to Docker Hub
-        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Build Docker image
-        run: |
-          docker build -t $IMAGE_NAME:latest -t $IMAGE_NAME:${{ steps.set_tag.outputs.tag }} .
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Push Docker images
+      - name: Build, tag, and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker push $IMAGE_NAME:latest
-          docker push $IMAGE_NAME:${{ steps.set_tag.outputs.tag }}
+          IMAGE_TAG=${{ steps.set-tag.outputs.tag }}
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
 
   deploy-dev:
-    name: Deploy to Development EC2
+    name: Deploy to Dev EC2
     needs: build-and-push
     runs-on: ubuntu-latest
     environment: development
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
 
-      - name: Setup SSH
+    steps:
+      - name: Set up SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ env.SSH_KEY }}
 
-      - name: Debug tag and image
-        run: |
-          echo "Tag: ${{ needs.build-and-push.outputs.image_tag }}"
-          echo "Image: ${{ env.IMAGE_NAME }}"
-
-      - name: Copy and execute deploy script on Dev EC2
+      - name: Deploy to Dev EC2 instance
         run: |
           TAG=${{ needs.build-and-push.outputs.image_tag }}
-          IMAGE_NAME=${{ env.IMAGE_NAME }}
-          scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.DEV_SERVER }}:/tmp/
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME $TAG development 8080"
+          IMAGE=${{ needs.build-and-push.outputs.image_uri }}
+
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.DEV_SERVER }} <<EOF
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+            docker stop static-resume || true && docker rm static-resume || true
+            docker pull $IMAGE
+            docker run -d --name static-resume -p 80:80 $IMAGE
+          EOF
 
   deploy-prod:
-    name: Deploy to Production EC2
-    needs: [deploy-dev, build-and-push]
+    name: Deploy to Prod EC2
+    needs: [build-and-push, deploy-dev]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
 
-      - name: Setup SSH
+    steps:
+      - name: Set up SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ env.SSH_KEY }}
 
-      - name: Debug tag and image
-        run: |
-          echo "Tag: ${{ needs.build-and-push.outputs.image_tag }}"
-          echo "Image: ${{ env.IMAGE_NAME }}"
-
-      - name: Copy and execute deploy script on Prod EC2
+      - name: Deploy to Prod EC2 instance
         run: |
           TAG=${{ needs.build-and-push.outputs.image_tag }}
-          IMAGE_NAME=${{ env.IMAGE_NAME }}
-          scp -o StrictHostKeyChecking=no ./deploy-container.sh ec2-user@${{ env.PROD_SERVER }}:/tmp/
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} \
-            "chmod +x /tmp/deploy-container.sh && /tmp/deploy-container.sh $IMAGE_NAME $TAG production 8080"
+          IMAGE=${{ needs.build-and-push.outputs.image_uri }}
+
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ env.PROD_SERVER }} <<EOF
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+            docker stop static-resume || true && docker rm static-resume || true
+            docker pull $IMAGE
+            docker run -d --name static-resume -p 80:80 $IMAGE
+          EOF
