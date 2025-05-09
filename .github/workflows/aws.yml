@@ -25,7 +25,7 @@ jobs:
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Verify EC2 connection
         run: ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} "hostname"
@@ -80,7 +80,7 @@ jobs:
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Verify EC2 connection
         run: ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} "hostname"
