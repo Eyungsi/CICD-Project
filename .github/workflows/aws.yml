@@ -18,36 +18,38 @@ jobs:
     environment: development
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up SSH key
-      uses: webfactory/ssh-agent@v0.7.0
-      with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-    - name: Clean remote directory
-      run: |
-        ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} \
-          "sudo rm -rf ${REMOTE_APP_DIR}/*"
+      - name: Prepare remote directory
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} \
+            "sudo mkdir -p ${REMOTE_APP_DIR} && sudo chown ec2-user:ec2-user ${REMOTE_APP_DIR}"
 
-    - name: Copy all repo files to Dev EC2
-      run: |
-        # Copy everything from repo root except the .github folder
-        rsync -av --exclude='.github' \
-          "$GITHUB_WORKSPACE"/ \
-          ec2-user@${{ secrets.DEV_SERVER_IP }}:${REMOTE_APP_DIR}/
+      - name: Copy all repo files (except workflows) to Dev EC2
+        run: |
+          rsync -av \
+            --exclude='.github' \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --rsync-path="sudo rsync" \
+            "$GITHUB_WORKSPACE"/ \
+            ec2-user@${{ secrets.DEV_SERVER_IP }}:${REMOTE_APP_DIR}/
 
-    - name: Fix permissions & restart web server
-      uses: appleboy/ssh-action@master
-      with:
-        host:     ${{ secrets.DEV_SERVER_IP }}
-        username: ec2-user
-        key:      ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
-          sudo chown -R apache:apache ${REMOTE_APP_DIR}
-          sudo chmod -R 755 ${REMOTE_APP_DIR}
-          sudo systemctl restart httpd
+      - name: Fix permissions & restart web server
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.DEV_SERVER_IP }}
+          username: ec2-user
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo chown -R apache:apache ${REMOTE_APP_DIR}
+            sudo chmod -R 755 ${REMOTE_APP_DIR}
+            sudo systemctl restart httpd
 
   deploy-prod:
     name: Deploy to Prod EC2
@@ -57,32 +59,35 @@ jobs:
     environment: production
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up SSH key
-      uses: webfactory/ssh-agent@v0.7.0
-      with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-    - name: Clean remote directory
-      run: |
-        ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} \
-          "sudo rm -rf ${REMOTE_APP_DIR}/*"
+      - name: Prepare remote directory
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} \
+            "sudo mkdir -p ${REMOTE_APP_DIR} && sudo chown ec2-user:ec2-user ${REMOTE_APP_DIR}"
 
-    - name: Copy all repo files to Prod EC2
-      run: |
-        rsync -av --exclude='.github' \
-          "$GITHUB_WORKSPACE"/ \
-          ec2-user@${{ secrets.PROD_SERVER_IP }}:${REMOTE_APP_DIR}/
+      - name: Copy all repo files (except workflows) to Prod EC2
+        run: |
+          rsync -av \
+            --exclude='.github' \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --rsync-path="sudo rsync" \
+            "$GITHUB_WORKSPACE"/ \
+            ec2-user@${{ secrets.PROD_SERVER_IP }}:${REMOTE_APP_DIR}/
 
-    - name: Fix permissions & restart web server
-      uses: appleboy/ssh-action@master
-      with:
-        host:     ${{ secrets.PROD_SERVER_IP }}
-        username: ec2-user
-        key:      ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
-          sudo chown -R apache:apache ${REMOTE_APP_DIR}
-          sudo chmod -R 755 ${REMOTE_APP_DIR}
-          sudo systemctl restart httpd
+      - name: Fix permissions & restart web server
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.PROD_SERVER_IP }}
+          username: ec2-user
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            sudo chown -R apache:apache ${REMOTE_APP_DIR}
+            sudo chmod -R 755 ${REMOTE_APP_DIR}
+            sudo systemctl restart httpd
