@@ -6,60 +6,39 @@ on:
       - main
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REGISTRY: 767398149585.dkr.ecr.us-east-1.amazonaws.com
-  ECR_REPOSITORY: static-resume
-  CONTAINER_NAME: static-resume-container
-  HOST_PORT: 80
-  CONTAINER_PORT: 8080
+  # local directory containing your static website files
+  LOCAL_APP_DIR: website
+  # remote path on the EC2 instance
+  REMOTE_APP_DIR: /var/www/html
 
 permissions:
   contents: read
 
 jobs:
-  build-and-push:
-    name: Build and Push to ECR
-    runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.set-tag.outputs.tag }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set image tag
-        id: set-tag
-        run: echo "tag=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          mask-password: true
-
-      - name: Build and push image
-        run: |
-          TAG=${{ steps.set-tag.outputs.tag }}
-          IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:$TAG
-
-          echo ">> Building & pushing $IMAGE_URI"
-          docker build -t $IMAGE_URI .
-          docker push     $IMAGE_URI
-
   deploy-dev:
     name: Deploy to Dev EC2
-    needs: build-and-push
     runs-on: ubuntu-latest
     environment: development
 
     steps:
-      - name: Deploy to Dev EC2
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Clean remote directory & copy files
+        run: |
+          # remove old files
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} \
+            "sudo rm -rf ${REMOTE_APP_DIR}/*"
+          # copy new files
+          scp -o StrictHostKeyChecking=no -r ${LOCAL_APP_DIR}/* \
+            ec2-user@${{ secrets.DEV_SERVER_IP }}:${REMOTE_APP_DIR}/
+
+      - name: Fix permissions & restart web server
         uses: appleboy/ssh-action@master
         with:
           host:     ${{ secrets.DEV_SERVER_IP }}
@@ -67,32 +46,34 @@ jobs:
           key:      ${{ secrets.SSH_PRIVATE_KEY }}
           port:     22
           script: |
-            TAG=${{ needs.build-and-push.outputs.image_tag }}
-            IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:$TAG
-
-            echo ">> IMAGE_URI  = $IMAGE_URI"
-
-            sudo docker stop ${{ env.CONTAINER_NAME }} || true
-            sudo docker rm   ${{ env.CONTAINER_NAME }} || true
-
-            sudo docker pull $IMAGE_URI
-            sudo docker run -d \
-              --name ${{ env.CONTAINER_NAME }} \
-              -p ${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }} \
-              --restart unless-stopped \
-              $IMAGE_URI
+            sudo chown -R apache:apache ${REMOTE_APP_DIR}
+            sudo chmod -R 755 ${REMOTE_APP_DIR}
+            sudo systemctl restart httpd
 
   deploy-prod:
     name: Deploy to Prod EC2
-    needs:
-      - build-and-push
-      - deploy-dev
+    needs: deploy-dev
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
 
     steps:
-      - name: Deploy to Prod EC2
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Clean remote directory & copy files
+        run: |
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} \
+            "sudo rm -rf ${REMOTE_APP_DIR}/*"
+          scp -o StrictHostKeyChecking=no -r ${LOCAL_APP_DIR}/* \
+            ec2-user@${{ secrets.PROD_SERVER_IP }}:${REMOTE_APP_DIR}/
+
+      - name: Fix permissions & restart web server
         uses: appleboy/ssh-action@master
         with:
           host:     ${{ secrets.PROD_SERVER_IP }}
@@ -100,17 +81,6 @@ jobs:
           key:      ${{ secrets.SSH_PRIVATE_KEY }}
           port:     22
           script: |
-            TAG=${{ needs.build-and-push.outputs.image_tag }}
-            IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:$TAG
-
-            echo ">> IMAGE_URI  = $IMAGE_URI"
-
-            sudo docker stop ${{ env.CONTAINER_NAME }} || true
-            sudo docker rm   ${{ env.CONTAINER_NAME }} || true
-
-            sudo docker pull $IMAGE_URI
-            sudo docker run -d \
-              --name ${{ env.CONTAINER_NAME }} \
-              -p ${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }} \
-              --restart unless-stopped \
-              $IMAGE_URI
+            sudo chown -R apache:apache ${REMOTE_APP_DIR}
+            sudo chmod -R 755 ${REMOTE_APP_DIR}
+            sudo systemctl restart httpd
