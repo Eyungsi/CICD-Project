@@ -1,131 +1,72 @@
-name: Deploy HTML App to EC2 (Dev & Prod)
-
-on:
-  push:
-    branches:
-      - main
-
-env:
-  REMOTE_DIR: /var/www/html
-  WEB_USER: apache  # Default web user for Amazon Linux
-
-permissions:
-  contents: read
-
 jobs:
   deploy-dev:
-    name: Deploy to Dev EC2
     runs-on: ubuntu-latest
-    environment: development
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure SSH
+      - name: Load SSH key
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Verify EC2 connection
-        run: ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} "hostname"
+      - name: Sync and prepare on Dev EC2
+        run: |
+          rsync -av --delete \
+            --exclude='.github' \
+            "$GITHUB_WORKSPACE"/ ec2-user@${{ secrets.DEV_SERVER_IP }}:/var/www/html/
 
-      - name: Prepare deployment directory
+      - name: Fix perms & restart webserver on Dev
         run: |
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} << 'EOF'
-          sudo mkdir -p $REMOTE_DIR
-          sudo chown -R ec2-user:ec2-user $REMOTE_DIR
-          sudo chmod -R 755 $REMOTE_DIR
+            # Ensure directory exists and has correct ownership
+            sudo mkdir -p /var/www/html
+            sudo chown -R ec2-user:ec2-user /var/www/html
+
+            # Final perms and restart
+            sudo chown -R apache:apache /var/www/html
+            sudo chmod -R 755 /var/www/html
+
+            if systemctl is-active --quiet httpd; then
+              sudo systemctl restart httpd
+            elif systemctl is-active --quiet apache2; then
+              sudo systemctl restart apache2
+            else
+              echo "No httpd/apache2 service found"
+            fi
           EOF
 
-      - name: Sync HTML files
-        run: |
-          rsync -avz --delete \
-            -e "ssh -o StrictHostKeyChecking=no" \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.gitignore' \
-            ./ ec2-user@${{ secrets.DEV_SERVER_IP }}:$REMOTE_DIR/
-
-      - name: Set permissions and restart web server
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.DEV_SERVER_IP }}
-          username: ec2-user
-          script: |
-            sudo chown -R $WEB_USER:$WEB_USER $REMOTE_DIR/*
-            sudo find $REMOTE_DIR -type d -exec chmod 755 {} \;
-            sudo find $REMOTE_DIR -type f -exec chmod 644 {} \;
-            
-            # Amazon Linux uses httpd, Ubuntu uses apache2
-            if sudo systemctl is-active --quiet httpd; then
-              sudo systemctl restart httpd
-            elif sudo systemctl is-active --quiet apache2; then
-              sudo systemctl restart apache2
-            elif sudo systemctl is-active --quiet nginx; then
-              sudo systemctl restart nginx
-            fi
-
   deploy-prod:
-    name: Deploy to Prod EC2
     needs: deploy-dev
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure SSH
+      - name: Load SSH key
         uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Verify EC2 connection
-        run: ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} "hostname"
+      - name: Sync and prepare on Prod EC2
+        run: |
+          rsync -av --delete \
+            --exclude='.github' \
+            "$GITHUB_WORKSPACE"/ ec2-user@${{ secrets.PROD_SERVER_IP }}:/var/www/html/
 
-      - name: Prepare deployment directory
+      - name: Fix perms & restart webserver on Prod
         run: |
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} << 'EOF'
-          sudo mkdir -p $REMOTE_DIR
-          sudo chown -R ec2-user:ec2-user $REMOTE_DIR
-          sudo chmod -R 755 $REMOTE_DIR
-          EOF
+            sudo mkdir -p /var/www/html
+            sudo chown -R ec2-user:ec2-user /var/www/html
 
-      - name: Sync HTML files
-        run: |
-          rsync -avz --delete \
-            -e "ssh -o StrictHostKeyChecking=no" \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.gitignore' \
-            ./ ec2-user@${{ secrets.PROD_SERVER_IP }}:$REMOTE_DIR/
+            sudo chown -R apache:apache /var/www/html
+            sudo chmod -R 755 /var/www/html
 
-      - name: Finalize deployment
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.PROD_SERVER_IP }}
-          username: ec2-user
-          script: |
-            sudo chown -R $WEB_USER:$WEB_USER $REMOTE_DIR/*
-            sudo find $REMOTE_DIR -type d -exec chmod 755 {} \;
-            sudo find $REMOTE_DIR -type f -exec chmod 644 {} \;
-            
-            # Verify files were deployed
-            ls -la $REMOTE_DIR
-            
-            # Restart web server
-            if sudo systemctl is-active --quiet httpd; then
+            if systemctl is-active --quiet httpd; then
               sudo systemctl restart httpd
-              echo "Restarted httpd service"
-            elif sudo systemctl is-active --quiet apache2; then
+            elif systemctl is-active --quiet apache2; then
               sudo systemctl restart apache2
-              echo "Restarted apache2 service"
-            elif sudo systemctl is-active --quiet nginx; then
-              sudo systemctl restart nginx
-              echo "Restarted nginx service"
             else
-              echo "No web server found to restart!"
-              exit 1
+              echo "No httpd/apache2 service found"
             fi
+          EOF
