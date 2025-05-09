@@ -67,12 +67,6 @@ jobs:
             elif systemctl is-active --quiet apache2; then
               sudo systemctl restart apache2
             else
-<<<<<<< HEAD
               echo "No httpd/apache2 service found"
             fi
           EOF
-=======
-              echo "No web server found to restart!"
-              exit 1
-            fi
->>>>>>> 020c9d3b95cdffa27a06767884ef0af1844d6372
