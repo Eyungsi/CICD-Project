@@ -1,72 +1,60 @@
+name: static resume app
+
+on:
+  push:
+    branches:
+      - main
+
 jobs:
-  deploy-dev:
+  build:
+    name:  Build Stage
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Load SSH key
-        uses: webfactory/ssh-agent@v0.7.0
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          node-version: '18'  # Adjust to your app's version
 
-      - name: Sync and prepare on Dev EC2
-        run: |
-          rsync -av --delete \
-            --exclude='.github' \
-            "$GITHUB_WORKSPACE"/ ec2-user@${{ secrets.DEV_SERVER_IP }}:/var/www/html/
+      - name: Install dependencies
+        run: npm install
 
-      - name: Fix perms & restart webserver on Dev
-        run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.DEV_SERVER_IP }} << 'EOF'
-            # Ensure directory exists and has correct ownership
-            sudo mkdir -p /var/www/html
-            sudo chown -R ec2-user:ec2-user /var/www/html
+      - name: Build the app
+        run: npm run build  # Assumes output is in ./dist
 
-            # Final perms and restart
-            sudo chown -R apache:apache /var/www/html
-            sudo chmod -R 755 /var/www/html
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: .
 
-            if systemctl is-active --quiet httpd; then
-              sudo systemctl restart httpd
-            elif systemctl is-active --quiet apache2; then
-              sudo systemctl restart apache2
-            else
-              echo "No httpd/apache2 service found"
-            fi
-          EOF
-
-  deploy-prod:
-    needs: deploy-dev
-    if: github.ref == 'refs/heads/main'
+  deploy:
+    name: Deploy Stage
     runs-on: ubuntu-latest
+    needs: build
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Load SSH key
-        uses: webfactory/ssh-agent@v0.7.0
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          name: build
+          path: .
 
-      - name: Sync and prepare on Prod EC2
+      - name: Setup SSH key
         run: |
-          rsync -av --delete \
-            --exclude='.github' \
-            "$GITHUB_WORKSPACE"/ ec2-user@${{ secrets.PROD_SERVER_IP }}:/var/www/html/
+          echo "${{ secrets.EC2_SSH_KEY }}" > ec2_key.pem
+          chmod 600 ec2_key.pem
 
-      - name: Fix perms & restart webserver on Prod
+      - name: Copy files to EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.PROD_SERVER_IP }} << 'EOF'
-            sudo mkdir -p /var/www/html
-            sudo chown -R ec2-user:ec2-user /var/www/html
+          scp -i ec2_key.pem -o StrictHostKeyChecking=no -r . ${{ secrets.EC2_HOST }}:${{ secrets.EC2_APP_PATH }}
 
-            sudo chown -R apache:apache /var/www/html
-            sudo chmod -R 755 /var/www/html
-
-            if systemctl is-active --quiet httpd; then
-              sudo systemctl restart httpd
-            elif systemctl is-active --quiet apache2; then
-              sudo systemctl restart apache2
-            else
-              echo "No httpd/apache2 service found"
-            fi
+      - name: Restart app on EC2
+        run: |
+          ssh -i ec2_key.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_HOST }} << 'EOF'
+            cd ${{ secrets.EC2_APP_PATH }}
+            pm2 restart all || sudo systemctl restart myapp.service
           EOF
